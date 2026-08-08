@@ -1,0 +1,20 @@
+name: 盘前早报
+on:
+  schedule:
+    - cron: '25 0 * * 1-5'   # 北京时间 08:25（UTC+8 = 00:25 UTC），周一至周五
+  workflow_dispatch:         # 支持手动点 Run 测试
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install -r requirements.txt
+        env:
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          WECHAT_WEBHOOK: ${{ secrets.WECHAT_WEBHOOK }}
+      - run: python daily_morning.py
+        env:
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          WECHAT_WEBHOOK: ${{ secrets.WECHAT_WEBHOOK }}

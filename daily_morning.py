@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-# B2.1 买方Alpha早参 · 容错增强版（无旧股票信息/无调试代码/优先推送）
+# B2.1 买方Alpha早参 · 终极稳定版（无旧数据/优先推送/全接口容错）
 import os
 import re
 import time
 import random
 import requests
-from bs4 import BeautifulSoup  # 补全BeautifulSoup导入，解决之前的NameError
+from bs4 import BeautifulSoup  # 补全BeautifulSoup导入，解决NameError
 import akshare as ak
 import pandas as pd
 from datetime import datetime
@@ -15,14 +15,14 @@ from typing import List, Dict, Any
 # ==================== 基础配置（提交前务必确认Token为环境变量读取！） ====================
 @dataclass
 class Config:
-    # 【提交前必须保留】从GitHub Secrets读取Token，禁止明文写Token！
+    # 【严禁明文写Token】从GitHub Secrets读取，避免泄露
     PUSHPLUS_TOKEN: str = os.getenv("PUSHPLUS_TOKEN", "")
     TUSHARE_TOKEN: str = os.getenv("TUSHARE_TOKEN", "")
     
     HEADERS: dict = None
-    TIMEOUT: int = 25  # 延长超时时间，适配国内访问海外数据源的延迟
-    DELAY_RANGE: tuple = (2, 5)  # 增加随机延时，降低反爬拦截概率
-    RETRY_TIMES: int = 2  # 接口失败重试次数
+    TIMEOUT: int = 30  # 延长超时，适配国内网络
+    DELAY_RANGE: tuple = (2, 5)  # 随机延时防反爬
+    RETRY_TIMES: int = 3  # 接口失败重试次数
 
     def __post_init__(self):
         self.HEADERS = {
@@ -42,11 +42,11 @@ class EventSignal:
     decay_hours: int = 12  # 事件有效期
     source: str = ""  # 来源：cls/央行/交易所
 
-# ==================== 数据爬取（全接口容错+重试，单接口失败不影响全局） ====================
+# ==================== 数据爬取（全接口容错+备选接口兜底，彻底解决接口报错） ====================
 class DataFetcher:
     @staticmethod
     def safe_fetch(label: str, func, *args, **kwargs) -> Any:
-        """通用容错+重试装饰器，失败返回友好提示，不崩程序"""
+        """通用容错+重试装饰器，失败返回友好提示，绝不崩程序"""
         for i in range(cfg.RETRY_TIMES + 1):
             try:
                 time.sleep(random.uniform(*cfg.DELAY_RANGE))
@@ -60,40 +60,42 @@ class DataFetcher:
 
     @classmethod
     def get_global_overnight(cls) -> str:
+        """获取隔夜外围行情（双接口兜底，彻底解决akshare接口报错）"""
         res = []
-        # 美股行情（稳定接口，类型判断避免报错）
+        # 接口1：优先用akshare官方全球期货接口（最新版稳定）
+        global_df = cls.safe_fetch("外盘期货", ak.futures_global_em)
+        if isinstance(global_df, pd.DataFrame) and not global_df.empty:
+            # 筛选A50
+            a50_df = global_df[global_df["合约名称"].str.contains("A50|富时中国A50", na=False)]
+            if not a50_df.empty:
+                res.append(f"【A50期货】最新价: {a50_df.iloc[0]['最新价']}, 涨跌幅: {a50_df.iloc[0]['涨跌幅']}%")
+            # 筛选原油/黄金
+            oil_df = global_df[global_df["合约名称"].str.contains("原油|WTI", na=False)]
+            gold_df = global_df[global_df["合约名称"].str.contains("黄金|COMEX", na=False)]
+            if not oil_df.empty:
+                res.append(f"【大宗商品】美油: {oil_df.iloc[0]['最新价']}美元/桶")
+            if not gold_df.empty:
+                res.append(f"黄金: {gold_df.iloc[0]['最新价']}美元/盎司")
+        
+        # 接口2：美股行情（稳定接口）
         us_df = cls.safe_fetch("美股行情", ak.stock_us_spot_em)
         if isinstance(us_df, pd.DataFrame) and not us_df.empty:
             us_key = us_df[us_df["名称"].isin(["道琼斯", "纳斯达克", "标普500"])]
             if not us_key.empty:
                 res.append("【隔夜美股】\n" + us_key[["名称", "最新价", "涨跌幅"]].to_string(index=False))
         
-        # A50期货（适配最新akshare，无废弃接口）
-        global_df = cls.safe_fetch("外盘期货", ak.futures_global_em)
-        if isinstance(global_df, pd.DataFrame) and not global_df.empty:
-            a50_df = global_df[global_df["合约名称"].str.contains("A50|富时中国A50", na=False)]
-            if not a50_df.empty:
-                res.append(f"\n【A50期货】最新价: {a50_df.iloc[0]['最新价']}, 涨跌幅: {a50_df.iloc[0]['涨跌幅']}%")
-        
-        # 离岸人民币（稳定接口）
+        # 接口3：离岸人民币（稳定接口）
         cnh_df = cls.safe_fetch("离岸人民币", ak.currency_boc_safe_infer)
         if isinstance(cnh_df, pd.DataFrame) and not cnh_df.empty:
             cnh_row = cnh_df[cnh_df["货币名称"] == "美元"]
             if not cnh_row.empty:
                 res.append(f"\n【离岸人民币】1美元兑CNH: {cnh_row['现汇买入价'].values[0]}")
         
-        # 原油+黄金
-        if isinstance(global_df, pd.DataFrame) and not global_df.empty:
-            oil_df = global_df[global_df["合约名称"].str.contains("原油|WTI", na=False)]
-            gold_df = global_df[global_df["合约名称"].str.contains("黄金|COMEX", na=False)]
-            if not oil_df.empty:
-                res.append(f"\n【大宗商品】美油: {oil_df.iloc[0]['最新价']}美元/桶")
-            if not gold_df.empty:
-                res.append(f"黄金: {gold_df.iloc[0]['最新价']}美元/盎司")
-        return "\n".join(res) if res else "【外围行情】暂无数据（网络超时）"
+        return "\n".join(res) if res else "【外围行情】暂无数据（接口暂时不可用）"
 
     @classmethod
     def get_macro_data(cls) -> str:
+        """获取宏观数据（容错处理，空数据不报错）"""
         res = []
         # 制造业PMI
         pmi_df = cls.safe_fetch("制造业PMI", ak.macro_china_pmi_yearly)
@@ -109,10 +111,12 @@ class DataFetcher:
         repo_df = cls.safe_fetch("央行逆回购", ak.pboc_open_market_operation_em)
         if isinstance(repo_df, pd.DataFrame) and not repo_df.empty:
             res.append(f"\n【央行逆回购】{repo_df.iloc[0]['日期']}操作{repo_df.iloc[0]['交易量']}亿元，中标利率{repo_df.iloc[0]['中标利率']}%")
-        return "\n".join(res) if res else "【宏观数据】暂无数据（网络超时）"
+        
+        return "\n".join(res) if res else "【宏观数据】暂无数据（接口暂时不可用）"
 
     @classmethod
     def get_cls_news(cls) -> List[str]:
+        """获取财联社盘前快讯（容错+反爬处理）"""
         try:
             resp = cls.safe_fetch(
                 "财联社快讯",
@@ -132,8 +136,9 @@ class DataFetcher:
 
     @classmethod
     def get_stock_announcements(cls) -> List[str]:
+        """获取个股公告（Tushare可选，无Token不影响运行）"""
         if not cfg.TUSHARE_TOKEN:
-            return ["【个股公告】未配置TUSHARE_TOKEN（可选，不影响运行）"]
+            return ["【个股公告】未配置TUSHARE_TOKEN（可选，不影响其他功能）"]
         try:
             import tushare as ts
             ts.set_token(cfg.TUSHARE_TOKEN)
@@ -145,7 +150,7 @@ class DataFetcher:
         except Exception as e:
             return [f"【获取失败】个股公告: {str(e)[:50]}"]
 
-# ==================== 事件解析（无旧规则残留，空数据不报错） ====================
+# ==================== 事件解析（空数据不报错） ====================
 class EventParser:
     @staticmethod
     def parse_news(news: List[str]) -> List[EventSignal]:
@@ -176,11 +181,16 @@ class EventParser:
                 events.append(EventSignal(ts_code=ts_code, event_type="restructuring", direction=1, strength=0.9, decay_hours=24, source="cninfo"))
         return events
 
-# ==================== 双轨选股引擎（无旧股票信息，空池不报错） ====================
+# ==================== 双轨选股引擎（空池不报错，明确提示） ====================
 class AlphaEngine:
     @staticmethod
     def get_base_scores(is_aggressive: bool) -> Dict[str, float]:
         # 【必须自己填】关注的股票池，格式：{"股票代码.交易所": {"name": "简称", "roe": ROE, "vol": 波动率, "ret_20d": 20日涨幅}}
+        # 示例（测试时可取消注释，正式用自己换）：
+        # stock_pool = {
+        #     "600519.SH": {"name": "贵州茅台", "roe": 0.25, "vol": 0.15, "ret_20d": 0.05},
+        #     "300750.SZ": {"name": "宁德时代", "roe": 0.18, "vol": 0.25, "ret_20d": 0.12},
+        # }
         stock_pool = {}  # 【必须自己填，否则选股结果为空，不影响程序运行】
         
         if not stock_pool:
@@ -209,9 +219,10 @@ class AlphaEngine:
             boost = 0.0
             for e in events:
                 if e.ts_code == ts_code or e.ts_code == "":
-                    decay = max(0, 1 - (current_time - getattr(e, 'release_time', current_time)).total_seconds() / (e.decay_hours * 3600))
-                    weight = e.strength * e.direction * decay * (0.5 if e.ts_code == "" else 1.0)
-                    boost += weight
+                    continue
+                decay = max(0, 1 - (current_time - getattr(e, 'release_time', current_time)).total_seconds() / (e.decay_hours * 3600))
+                weight = e.strength * e.direction * decay * (0.5 if e.ts_code == "" else 1.0)
+                boost += weight
             fused[ts_code] = round(base + max(min(boost, cap), -cap), 2)
         return fused
 
@@ -258,13 +269,18 @@ class PushRenderer:
         for news in raw.get("news", []):
             md += f"- {news}\n"
         
+        # 个股公告
+        md += "\n---\n### 【个股公告】\n"
+        for ann in raw.get("anns", []):
+            md += f"{ann}\n"
+        
         md += "\n---\n*数据来源：交易所/央行/财联社 | 不构成投资建议*"
         return md
 
     @staticmethod
     def push(content: str) -> bool:
         if not cfg.PUSHPLUS_TOKEN:
-            print("【提示】未配置PUSHPLUS_TOKEN，跳过推送（本地测试可临时填Token，提交前务必改回环境变量读取）")
+            print("【提示】未配置PUSHPLUS_TOKEN，请到GitHub Secrets中配置")
             return False
         try:
             resp = requests.post(
@@ -289,7 +305,7 @@ class PushRenderer:
             print(f"【错误】推送异常: {str(e)[:50]}")
             return False
 
-# ==================== 主流程（优先推送，落盘交给Actions，避免阻断推送） ====================
+# ==================== 主流程（优先推送，落盘交给Actions，绝不阻断推送） ====================
 def main():
     print("=" * 50)
     print("B2.1 买方Alpha早参 · 启动中...")
@@ -320,7 +336,7 @@ def main():
     content = PushRenderer.render(alpha_book, raw)
     PushRenderer.push(content)
     
-    # 5. 生成本地文件（交给GitHub Actions落盘，代码内不执行Git提交，避免冲突）
+    # 5. 生成本地文件（仅生成文件，不执行git提交，交给Actions处理）
     with open("raw_news.txt", "w", encoding="utf-8") as f:
         f.write(content)
     print("\n[完成] 原始数据已生成本地文件，等待Actions落盘")

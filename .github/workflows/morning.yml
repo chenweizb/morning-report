@@ -24,13 +24,13 @@ jobs:
         with:
           python-version: '3.10'
 
-      # 第三步：安装所有依赖（含akshare/tushare，用清华镜像加速）
+      # 第三步：安装所有依赖（含akshare/tushare，用清华镜像加速，解决海外服务器安装慢问题）
       - name: 安装依赖库
         run: |
           python -m pip install --upgrade pip
-          pip install -i https://pypi.tuna.tsinghua.edu.cn/simple/ requests beautifulsoup4 akshare tushare
+          pip install -i https://pypi.tuna.tsinghua.edu.cn/simple/ requests beautifulsoup4 akshare tushare pandas
 
-      # 第四步：运行早报脚本，输出落盘到report.txt（核心修复：避免多行内容转义失败）
+      # 第四步：运行早报脚本，输出落盘到report.txt（核心修复：避免多行内容转义失败导致的空白推送）
       - name: 运行早报脚本并生成报告文件
         run: python daily_morning.py > report.txt
 

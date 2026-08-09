@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# B2.1 买方Alpha早参 · 终极稳定版（适配AkShare 1.16+/汇率接口修复/零崩溃/优先推送）
+# B2.1 买方Alpha早参 · 终极稳定全量版（适配AkShare 1.16+/动态字段匹配/零崩溃/优先推送）
 import os
 import re
 import time
@@ -35,12 +35,12 @@ cfg = Config()
 class EventSignal:
     ts_code: str = ""
     event_type: str = ""
-    direction: int = 0
-    strength: float = 0.0
-    decay_hours: int = 12
-    source: str = ""
+    direction: int = 0  # +1利好/-1利空
+    strength: float = 0.0  # 0~1强度
+    decay_hours: int = 12  # 事件有效期
+    source: str = ""  # 来源：cls/央行/交易所
 
-# ==================== 数据爬取（全接口适配最新AkShare/全容错/永不崩溃） ====================
+# ==================== 数据爬取（全接口容错+动态字段适配，彻底解决KeyError） ====================
 class DataFetcher:
     @staticmethod
     def safe_fetch(label: str, func, *args, **kwargs) -> Any:
@@ -58,35 +58,45 @@ class DataFetcher:
 
     @classmethod
     def get_global_overnight(cls) -> str:
-        """获取隔夜外围行情（适配AkShare 1.16+，全接口兜底，汇率接口终极修复）"""
+        """获取隔夜外围行情（全接口适配AkShare 1.16+）"""
         res = []
         
-        # 1. 外盘期货（替换失效的futures_global_em为新版spot接口）
+        # 1. 外盘期货（替换失效接口，动态适配字段）
         global_df = cls.safe_fetch("外盘期货", ak.futures_global_spot_em)
         if isinstance(global_df, pd.DataFrame) and not global_df.empty:
-            # 字段适配新接口（新接口字段：symbol/name/last_price/pct_chg）
+            # 动态适配新接口字段（新接口字段可能为symbol/name/last_price/pct_chg）
             if "名称" not in global_df.columns:
-                global_df = global_df.rename(columns={
-                    "symbol": "代码",
-                    "name": "名称",
-                    "last_price": "最新价",
-                    "pct_chg": "涨跌幅"
-                })
+                rename_map = {}
+                for col in global_df.columns:
+                    if "symbol" in col.lower():
+                        rename_map[col] = "代码"
+                    elif "name" in col.lower():
+                        rename_map[col] = "名称"
+                    elif "price" in col.lower() or "last" in col.lower():
+                        rename_map[col] = "最新价"
+                    elif "pct" in col.lower() or "chg" in col.lower():
+                        rename_map[col] = "涨跌幅"
+                global_df = global_df.rename(columns=rename_map)
+            
             # 筛选A50
-            a50_df = global_df[global_df["名称"].str.contains("A50|富时中国A50", na=False)]
-            if not a50_df.empty:
+            a50_mask = global_df["名称"].str.contains("A50|富时中国A50", case=False, na=False)
+            if a50_mask.any():
+                a50_df = global_df[a50_mask]
                 res.append(f"【A50期货】最新价: {a50_df.iloc[0]['最新价']}, 涨跌幅: {a50_df.iloc[0]['涨跌幅']}%")
+            
             # 筛选原油/黄金
-            oil_df = global_df[global_df["名称"].str.contains("原油|WTI", na=False)]
-            gold_df = global_df[global_df["名称"].str.contains("黄金|COMEX", na=False)]
-            if not oil_df.empty:
+            oil_mask = global_df["名称"].str.contains("原油|WTI", case=False, na=False)
+            gold_mask = global_df["名称"].str.contains("黄金|COMEX", case=False, na=False)
+            if oil_mask.any():
+                oil_df = global_df[oil_mask]
                 res.append(f"【大宗商品】美油: {oil_df.iloc[0]['最新价']}美元/桶")
-            if not gold_df.empty:
+            if gold_mask.any():
+                gold_df = global_df[gold_mask]
                 res.append(f"黄金: {gold_df.iloc[0]['最新价']}美元/盎司")
         else:
             res.append("【外盘期货】暂无数据（接口暂时不可用）")
 
-        # 2. 美股行情（稳定接口，无变更）
+        # 2. 美股行情（稳定接口）
         us_df = cls.safe_fetch("美股行情", ak.stock_us_spot_em)
         if isinstance(us_df, pd.DataFrame) and not us_df.empty:
             us_key = us_df[us_df["名称"].isin(["道琼斯", "纳斯达克", "标普500"])]
@@ -98,10 +108,10 @@ class DataFetcher:
         # 3. 离岸人民币（终极修复：适配AkShare 1.16+新接口，无'货币名称'列）
         cnh_df = cls.safe_fetch("离岸人民币", ak.currency_boc_safe)
         if isinstance(cnh_df, pd.DataFrame) and not cnh_df.empty:
-            # 新版接口直接将货币作为列名，判断'美元'列是否存在且有有效值
-            if "美元" in cnh_df.columns and pd.notna(cnh_df.iloc[0]["美元"]):
-                # 提取美元兑人民币的中间价（新接口数值为中间价，单位CNY/USD）
-                cnh_value = cnh_df.iloc[0]["美元"]
+            # 动态寻找美元列（新接口直接将货币作为列名）
+            usd_cols = [col for col in cnh_df.columns if "美元" in col]
+            if usd_cols and pd.notna(cnh_df.iloc[0][usd_cols[0]]):
+                cnh_value = cnh_df.iloc[0][usd_cols[0]]
                 res.append(f"\n【离岸人民币】1美元兑CNH: {cnh_value}")
             else:
                 res.append("\n【离岸人民币】暂无有效数据（接口返回结构异常）")
@@ -112,19 +122,35 @@ class DataFetcher:
 
     @classmethod
     def get_macro_data(cls) -> str:
-        """获取宏观数据（全容错）"""
+        """获取宏观数据（终极动态字段适配，彻底解决KeyError: 'value'）"""
         res = []
-        # 制造业PMI
+        
+        # 制造业PMI（动态匹配含“制造业”的列，不再依赖固定'value'列）
         pmi_df = cls.safe_fetch("制造业PMI", ak.macro_china_pmi_yearly)
-        if isinstance(pmi_df, pd.DataFrame) and not pmi_df.empty and len(pmi_df) >= 2:
-            res.append(f"【制造业PMI】最新值: {pmi_df['value'].iloc[-1]}%, 前值: {pmi_df['value'].iloc[-2]}%")
+        if isinstance(pmi_df, pd.DataFrame) and not pmi_df.empty:
+            # 动态寻找制造业相关列
+            mfg_cols = [col for col in pmi_df.columns if "制造业" in col]
+            if mfg_cols:
+                val_col = mfg_cols[0]
+                latest_val = pmi_df[val_col].iloc[0]
+                prev_val = pmi_df[val_col].iloc[1] if len(pmi_df) > 1 else "N/A"
+                res.append(f"【制造业PMI】最新值: {latest_val}%, 前值: {prev_val}%")
+            else:
+                res.append("【制造业PMI】暂无有效数据（未找到制造业相关列）")
         else:
             res.append("【制造业PMI】暂无数据（接口暂时不可用）")
         
-        # CPI通胀
+        # CPI通胀（动态匹配含“CPI”的列）
         cpi_df = cls.safe_fetch("CPI通胀", ak.macro_china_cpi_yearly)
-        if isinstance(cpi_df, pd.DataFrame) and not cpi_df.empty and len(cpi_df) >= 2:
-            res.append(f"【CPI通胀】最新值: {cpi_df['value'].iloc[-1]}%, 前值: {cpi_df['value'].iloc[-2]}%")
+        if isinstance(cpi_df, pd.DataFrame) and not cpi_df.empty:
+            cpi_cols = [col for col in cpi_df.columns if "CPI" in col or "消费价格" in col]
+            if cpi_cols:
+                val_col = cpi_cols[0]
+                latest_val = cpi_df[val_col].iloc[0]
+                prev_val = cpi_df[val_col].iloc[1] if len(cpi_df) > 1 else "N/A"
+                res.append(f"【CPI通胀】最新值: {latest_val}%, 前值: {prev_val}%")
+            else:
+                res.append("【CPI通胀】暂无有效数据（未找到CPI相关列）")
         else:
             res.append("【CPI通胀】暂无数据（接口暂时不可用）")
         
@@ -209,6 +235,11 @@ class AlphaEngine:
     @staticmethod
     def get_base_scores(is_aggressive: bool) -> Dict[str, float]:
         # 【必须自己填】关注的股票池，格式：{"股票代码.交易所": {"name": "简称", "roe": ROE, "vol": 波动率, "ret_20d": 20日涨幅}}
+        # 示例（取消注释即可测试）：
+        # stock_pool = {
+        #     "600519.SH": {"name": "贵州茅台", "roe": 0.25, "vol": 0.15, "ret_20d": 0.05},
+        #     "300750.SZ": {"name": "宁德时代", "roe": 0.18, "vol": 0.25, "ret_20d": 0.12},
+        # }
         stock_pool = {}  # 空池不影响推送，仅提示未配置
         if not stock_pool:
             return {}

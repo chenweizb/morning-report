@@ -18,7 +18,7 @@ jobs:
           python-version: '3.x'
       - name: Install dependencies
         run: |
-          pip install requests beautifulsoup4
+          pip install requests beautifulsoup4 akshare
       - name: Run script
         run: |
           python daily_morning.py

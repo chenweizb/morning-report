@@ -1,50 +1,44 @@
 name: 盘前早报自动推送（全周7:45·北京时间）
 
 on:
-  # 保留手动测试按钮，随时可点「Run workflow」验证
+  # 手动测试按钮，随时可点验证
   workflow_dispatch:
-  # 定时触发：北京时间周一至周日每天7:45推送
-  # UTC时间 = 北京时间-8小时 → 7:45-8h=前一天23:45
-  # 星期参数0=周日、1=周一…6=周六，「0-6」覆盖全周
+  # 定时触发：北京时间周一至周日7:45
+  # UTC时间=北京时间-8小时 → 7:45-8h=前一天23:45
+  # 星期参数0=周日、1=周一…6=周六，覆盖全周
   schedule:
     - cron: '45 23 * * 0-6'
       timezone: 'Asia/Shanghai'  # 强制指定北京时间，彻底规避时区坑
-
-# 可选：消除Node.js 20弃用警告（不影响功能，想消警告就加）
-env:
-  NODE_VERSION: '24'
 
 jobs:
   send_morning_report:
     runs-on: ubuntu-latest
     steps:
-      # 第一步：拉取仓库所有代码（必须，否则找不到你的daily_morning.py）
+      # 第一步：拉取最新代码
       - name: 拉取最新代码
         uses: actions/checkout@v4
 
-      # 第二步：配置Python 3.10环境（和你本地版本一致，避免兼容问题）
+      # 第二步：配置Python 3.10环境
       - name: 配置Python环境
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      # 第三步：安装所有依赖（含akshare/tushare/bs4，用清华镜像加速，解决海外服务器安装慢/失败问题）
+      # 第三步：安装所有依赖（含akshare/tushare，用清华镜像加速）
       - name: 安装依赖库
         run: |
           python -m pip install --upgrade pip
           pip install -i https://pypi.tuna.tsinghua.edu.cn/simple/ requests beautifulsoup4 akshare tushare
 
-      # 第四步：运行早报脚本，把输出保存到report.txt（核心修复：避免直接捕获stdout被截断）
+      # 第四步：运行早报脚本，输出落盘到report.txt（核心修复：避免多行内容转义失败）
       - name: 运行早报脚本并生成报告文件
         run: python daily_morning.py > report.txt
 
       # 第五步：推送结果到微信（PushPlus）
-      # 关键逻辑：先读report.txt的内容，再传给PushPlus，彻底解决多行内容转义导致的空白问题
+      # 读取report.txt的内容，彻底解决空白推送问题
       - name: 推送早报到微信（PushPlus）
         run: |
-          # 读取脚本生成的完整早报内容
           CONTENT=$(cat report.txt)
-          # 调用PushPlus接口发送（template用markdown适配你脚本里的标题格式）
           curl -X POST "https://www.pushplus.plus/send" \
             -H "Content-Type: application/json" \
             -d '{

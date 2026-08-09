@@ -4,11 +4,15 @@ on:
   # 保留手动测试按钮，随时可点「Run workflow」验证
   workflow_dispatch:
   # 定时触发：北京时间周一至周日每天7:45推送
-  # ⚠️ 换算说明：GitHub用UTC时间，比北京时间慢8小时 → 7:45-8h=前一天23:45
-  # 星期参数0=周日、1=周一…6=周六，「0-6」刚好覆盖全周
+  # UTC时间 = 北京时间-8小时 → 7:45-8h=前一天23:45
+  # 星期参数0=周日、1=周一…6=周六，「0-6」覆盖全周
   schedule:
     - cron: '45 23 * * 0-6'
       timezone: 'Asia/Shanghai'  # 强制指定北京时间，彻底规避时区坑
+
+# 可选：消除Node.js 20弃用警告（不影响功能，想消警告就加）
+env:
+  NODE_VERSION: '24'
 
 jobs:
   send_morning_report:
@@ -24,28 +28,28 @@ jobs:
         with:
           python-version: '3.10'
 
-      # 第三步：安装所有依赖（含akshare，用清华镜像加速，解决海外服务器安装慢/失败问题）
+      # 第三步：安装所有依赖（含akshare/tushare/bs4，用清华镜像加速，解决海外服务器安装慢/失败问题）
       - name: 安装依赖库
         run: |
           python -m pip install --upgrade pip
-          pip install -i https://pypi.tuna.tsinghua.edu.cn/simple/ requests beautifulsoup4 akshare
+          pip install -i https://pypi.tuna.tsinghua.edu.cn/simple/ requests beautifulsoup4 akshare tushare
 
-      # 第四步：运行你的早报爬虫脚本（生成盘前数据）
-      - name: 运行盘前早报脚本
-        run: python daily_morning.py
+      # 第四步：运行早报脚本，把输出保存到report.txt（核心修复：避免直接捕获stdout被截断）
+      - name: 运行早报脚本并生成报告文件
+        run: python daily_morning.py > report.txt
 
-      # 第五步：推送结果到微信（用你已配置的PushPlus密钥，无需改代码）
-      - name: 推送早报到微信
+      # 第五步：推送结果到微信（PushPlus）
+      # 关键逻辑：先读report.txt的内容，再传给PushPlus，彻底解决多行内容转义导致的空白问题
+      - name: 推送早报到微信（PushPlus）
         run: |
-          # 读取脚本生成的早报内容（假设你的脚本把结果存在report.txt里，或直接打印到控制台）
-          # 如果你的脚本直接print了内容，用下面的命令捕获输出
-          REPORT_CONTENT=$(python daily_morning.py)
-          # 调用PushPlus接口发送
-          curl -X POST "http://www.pushplus.plus/send" \
+          # 读取脚本生成的完整早报内容
+          CONTENT=$(cat report.txt)
+          # 调用PushPlus接口发送（template用markdown适配你脚本里的标题格式）
+          curl -X POST "https://www.pushplus.plus/send" \
             -H "Content-Type: application/json" \
             -d '{
               "token": "${{ secrets.PUSHPLUS_TOKEN }}",
-              "title": "盘前早报（$(date +%Y-%m-%d)）",
-              "content": "'"${REPORT_CONTENT}"'",
-              "template": "html"
+              "title": "盘前早报 $(date +%Y-%m-%d)",
+              "content": "'"${CONTENT}"'",
+              "template": "markdown"
             }'

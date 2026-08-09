@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# B2.1 买方Alpha早参 · 终极稳定版（全接口适配AkShare 1.16+/零崩溃/优先推送）
+# B2.1 买方Alpha早参 · 终极稳定版（适配AkShare 1.16+/汇率接口修复/零崩溃/优先推送）
 import os
 import re
 import time
@@ -58,7 +58,7 @@ class DataFetcher:
 
     @classmethod
     def get_global_overnight(cls) -> str:
-        """获取隔夜外围行情（适配AkShare 1.16+，全接口兜底）"""
+        """获取隔夜外围行情（适配AkShare 1.16+，全接口兜底，汇率接口终极修复）"""
         res = []
         
         # 1. 外盘期货（替换失效的futures_global_em为新版spot接口）
@@ -95,13 +95,16 @@ class DataFetcher:
         else:
             res.append("【隔夜美股】暂无数据（接口暂时不可用）")
 
-        # 3. 离岸人民币（替换失效的currency_boc_safe_infer为新版接口）
+        # 3. 离岸人民币（终极修复：适配AkShare 1.16+新接口，无'货币名称'列）
         cnh_df = cls.safe_fetch("离岸人民币", ak.currency_boc_safe)
         if isinstance(cnh_df, pd.DataFrame) and not cnh_df.empty:
-            # 筛选美元兑人民币（字段适配新接口）
-            cnh_row = cnh_df[cnh_df["货币名称"] == "美元"]
-            if not cnh_row.empty:
-                res.append(f"\n【离岸人民币】1美元兑CNH: {cnh_row['现汇买入价'].values[0]}")
+            # 新版接口直接将货币作为列名，判断'美元'列是否存在且有有效值
+            if "美元" in cnh_df.columns and pd.notna(cnh_df.iloc[0]["美元"]):
+                # 提取美元兑人民币的中间价（新接口数值为中间价，单位CNY/USD）
+                cnh_value = cnh_df.iloc[0]["美元"]
+                res.append(f"\n【离岸人民币】1美元兑CNH: {cnh_value}")
+            else:
+                res.append("\n【离岸人民币】暂无有效数据（接口返回结构异常）")
         else:
             res.append("\n【离岸人民币】暂无数据（接口暂时不可用）")
 

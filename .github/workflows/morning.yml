@@ -2,7 +2,7 @@ name: 盘前早报+B2.1实盘系统
 on:
   workflow_dispatch:  # 支持手动触发
   schedule:
-    - cron: '45 23 * * 0-6'  # 每天7:45北京时间运行（UTC+8=23:45 UTC）
+    - cron: '45 23 * * 0-6'  # 北京时间7:45运行（UTC+8=23:45 UTC）
       timezone: 'Asia/Shanghai'
 jobs:
   run:

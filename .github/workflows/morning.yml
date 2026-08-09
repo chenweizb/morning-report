@@ -19,7 +19,6 @@ jobs:
       - name: 运行主程序
         env:
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
-          TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
         run: python daily_morning.py
       - name: 落盘原始数据（容错）
         run: |

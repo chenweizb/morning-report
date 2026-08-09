@@ -1,45 +1,40 @@
 # -*- coding: utf-8 -*-
-# B2.1 买方Alpha早参 · 生产级稳定版（2024.10更新/无乱告警/推送必达）
+# B2.1 买方Alpha早参 · 生产级稳定版（全接口容错/无乱告警/推送必达）
 import os
-import re
 import time
 import random
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 import akshare as ak
 import pandas as pd
-from typing import List, Dict, Any
+from typing import Any, List, Dict
 
-# ==================== 基础配置（自动读取GitHub Secrets，无需改代码） ====================
+# ==================== 配置区（自动读取环境变量，禁止明文写Token） ====================
 class Config:
-    # 微信推送配置（必填，从GitHub Secrets读取）
+    # 微信推送配置（从GitHub Secrets/系统环境变量读取）
     PUSHPLUS_TOKEN = os.environ.get("PUSHPLUS_TOKEN", "")
-    # 可选：Tushare配置（无Token不影响核心推送）
-    TUSHARE_TOKEN = os.environ.get("TUSHARE_TOKEN", "")
-    
-    # 请求头（反爬必备）
+    # 反爬请求头
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
         "Referer": "https://www.cls.cn/"
     }
-    
     # 超时/重试配置
     TIMEOUT = 30
     RETRY_TIMES = 3  # 单接口最多重试3次
-    DELAY_RANGE = (1, 3)  # 反爬随机延迟（秒）
+    DELAY_RANGE = (1, 3)  # 随机延迟防反爬
 
 cfg = Config()
 
-# ==================== 工具类：安全数据抓取（单接口失败不影响全局） ====================
+# ==================== 全接口容错工具类（单个接口失败不影响全局） ====================
 class SafeFetcher:
-    """所有第三方接口调用都包一层容错，单个接口失败仅返回「暂无数据」，不触发程序崩溃"""
+    """所有第三方接口调用都包一层容错：失败仅返回「暂无数据」，绝不崩溃"""
     @staticmethod
     def fetch(label: str, func, *args, default_return="暂无数据", **kwargs) -> Any:
         for attempt in range(cfg.RETRY_TIMES + 1):
             try:
                 time.sleep(random.uniform(*cfg.DELAY_RANGE))  # 随机延迟防封
                 result = func(*args, **kwargs)
-                # 校验返回结果是否有效
+                # 校验返回结果有效性
                 if result is None:
                     raise ValueError("返回结果为空")
                 if isinstance(result, pd.DataFrame) and result.empty:
@@ -94,7 +89,7 @@ class DataFetcher:
                 if not gold.empty:
                     res.append(f"  - **COMEX黄金**：{gold.iloc[0]['最新价']}美元/盎司")
         else:
-            res.append("  - 外盘期货数据暂缺")
+            res.append(global_df)  # 接口失败时直接加「暂无数据」提示
 
         # 2. 美股行情（最新稳定接口：stock_us_spot_em）
         us_df = SafeFetcher.fetch("美股行情", ak.stock_us_spot_em)
@@ -105,7 +100,7 @@ class DataFetcher:
                 for _, row in us_idx.iterrows():
                     res.append(f"    - {row['名称']}：{row['最新价']}（涨跌幅：{row['涨跌幅']}%）")
         else:
-            res.append("  - 美股数据暂缺")
+            res.append(us_df if isinstance(us_df, str) else "  - 美股数据暂缺")
 
         # 3. 离岸人民币（最新稳定接口：currency_boc_safe）
         cnh_df = SafeFetcher.fetch("离岸人民币", ak.currency_boc_safe)
@@ -117,13 +112,13 @@ class DataFetcher:
             else:
                 res.append("  - 离岸人民币汇率暂缺")
         else:
-            res.append("  - 离岸人民币汇率暂缺")
+            res.append(cnh_df if isinstance(cnh_df, str) else "  - 离岸人民币汇率暂缺")
         
         return "\n".join(res)
 
     @classmethod
     def get_macro_data(cls) -> str:
-        """获取宏观数据（修复逆回购接口失效问题）"""
+        """获取宏观数据（适配最新逆回购接口，彻底解决AttributeError）"""
         res = ["\n🇨🇳 **【宏观脉搏】**"]
         
         # 1. 制造业PMI
@@ -139,7 +134,7 @@ class DataFetcher:
             else:
                 res.append("  - 制造业PMI数据暂缺")
         else:
-            res.append("  - 制造业PMI数据暂缺")
+            res.append(pmi_df if isinstance(pmi_df, str) else "  - 制造业PMI数据暂缺")
 
         # 2. CPI通胀
         cpi_df = SafeFetcher.fetch("CPI通胀", ak.macro_china_cpi_yearly)
@@ -154,15 +149,15 @@ class DataFetcher:
             else:
                 res.append("  - CPI通胀数据暂缺")
         else:
-            res.append("  - CPI通胀数据暂缺")
+            res.append(cpi_df if isinstance(cpi_df, str) else "  - CPI通胀数据暂缺")
 
-        # 3. 央行逆回购（🔧 核心修复：旧接口macro_china_gksccz已失效，替换为官方维护的macro_china_hb）
+        # 3. 央行逆回购（🔧 核心修复：旧接口已失效，替换为官方维护的macro_china_hb）
         repo_df = SafeFetcher.fetch("央行逆回购", ak.macro_china_hb, symbol="weekly")  # weekly=周度数据，可改为daily取日度
         if isinstance(repo_df, pd.DataFrame) and not repo_df.empty:
             latest = repo_df.iloc[-1]  # 取最新一条数据
             # 动态匹配列名（不同版本列名可能有差异）
-            put_col = [col for col in repo_df.columns if "投放量" in col]
-            back_col = [col for col in repo_df.columns if "回笼量" in col]
+            put_col = [col for col in repo_df.columns if "投放" in col]
+            back_col = [col for col in repo_df.columns if "回笼" in col]
             net_col = [col for col in repo_df.columns if "净投放" in col]
             date_col = [col for col in repo_df.columns if "日期" in col]
             
@@ -173,7 +168,7 @@ class DataFetcher:
             
             res.append(f"  - **央行逆回购**：{date_str}净投放{net_val}亿元（投放：{put_val}，回笼：{back_val}）")
         else:
-            res.append("  - 央行逆回购数据暂缺")
+            res.append(repo_df if isinstance(repo_df, str) else "  - 央行逆回购数据暂缺")
         
         return "\n".join(res)
 
@@ -199,12 +194,12 @@ class DataFetcher:
                 else:
                     res.append("  - 今日暂无盘前快讯")
             else:
-                res.append("  - 财联社快讯抓取失败")
+                res.append(resp if isinstance(resp, str) else "  - 财联社快讯抓取失败")
         except Exception as e:
             res.append(f"  - 财联社快讯异常：{str(e)[:50]}")
         return res
 
-# ==================== 推送层（明确日志，方便排查） ====================
+# ==================== 推送服务层（明确日志，方便排查） ====================
 class PushService:
     @staticmethod
     def push(content: str) -> bool:
@@ -235,6 +230,7 @@ class PushService:
             result = resp.json()
             if result.get("code") == 200:
                 print("✅ 微信推送成功！请检查微信服务号「pushplus 推送加」")
+                print("💡 提示：如果没收到，去微信首页下拉的「订阅号消息」文件夹里找（服务号常被折叠）")
                 return True
             else:
                 print(f"❌ 推送失败：{result.get('msg')}（错误码：{result.get('code')}）")
@@ -274,15 +270,6 @@ def main():
         print("\n✅ 原始数据已落盘：raw_news.txt")
     except Exception as e:
         print(f"\n⚠️ 落盘失败（不影响推送）：{str(e)[:50]}")
-    
-    # 5. 仅当推送失败时发告警（不再乱发崩溃告警）
-    if not push_success and cfg.PUSHPLUS_TOKEN:
-        PushService.push(
-            f"# ⚠️ B2.1 早报推送失败告警\n\n"
-            f"时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"原因：微信推送接口调用失败，请检查Token配置或PushPlus服务状态\n"
-            f"原始内容预览：\n```\n{content[:500]}...\n```"
-        )
     
     print("\n" + "=" * 50)
     print("✨ 本次运行结束")

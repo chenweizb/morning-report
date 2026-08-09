@@ -1,8 +1,8 @@
 name: 盘前早报+B2.1实盘系统
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # 支持手动触发
   schedule:
-    - cron: '45 23 * * 0-6'
+    - cron: '45 23 * * 0-6'  # 每天7:45北京时间运行（UTC+8=23:45 UTC）
       timezone: 'Asia/Shanghai'
 jobs:
   run:
@@ -21,7 +21,7 @@ jobs:
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
         run: python daily_morning.py
-      - name: 落盘原始数据（容错处理，文件不存在也不报错）
+      - name: 落盘原始数据（容错）
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"

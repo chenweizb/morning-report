@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# B2.1 买方Alpha早参 · 终极稳定版(全接口适配/优先推送/零崩溃)
+# B2.1 买方Alpha早参 · 终极稳定版（全接口适配AkShare 1.16+/零崩溃/优先推送）
 import os
 import re
 import time
@@ -12,7 +12,7 @@ from datetime import datetime
 from dataclasses import dataclass
 from typing import List, Dict, Any
 
-# ==================== 基础配置(提交前确认Token从Secrets读取,严禁明文！) ====================
+# ==================== 基础配置（严禁明文写Token，从GitHub Secrets读取） ====================
 @dataclass
 class Config:
     PUSHPLUS_TOKEN: str = os.getenv("PUSHPLUS_TOKEN", "")
@@ -40,10 +40,11 @@ class EventSignal:
     decay_hours: int = 12
     source: str = ""
 
-# ==================== 数据爬取(全接口适配AkShare最新版,彻底解决接口报错) ====================
+# ==================== 数据爬取（全接口适配最新AkShare/全容错/永不崩溃） ====================
 class DataFetcher:
     @staticmethod
     def safe_fetch(label: str, func, *args, **kwargs) -> Any:
+        """通用容错+重试装饰器，单接口失败不影响全局"""
         for i in range(cfg.RETRY_TIMES + 1):
             try:
                 time.sleep(random.uniform(*cfg.DELAY_RANGE))
@@ -57,14 +58,20 @@ class DataFetcher:
 
     @classmethod
     def get_global_overnight(cls) -> str:
-        """获取隔夜外围行情(适配AkShare 1.16+,双接口兜底,永不崩溃)"""
+        """获取隔夜外围行情（适配AkShare 1.16+，全接口兜底）"""
         res = []
-        # 接口1:优先用最新版全球现货接口(替代失效的futures_global_em)
+        
+        # 1. 外盘期货（替换失效的futures_global_em为新版spot接口）
         global_df = cls.safe_fetch("外盘期货", ak.futures_global_spot_em)
         if isinstance(global_df, pd.DataFrame) and not global_df.empty:
-            # 字段映射适配新接口(新接口字段为symbol/name/last_price)
-            if '代码' not in global_df.columns:
-                global_df = global_df.rename(columns={'symbol': '代码', 'name': '名称', 'last_price': '最新价', 'pct_chg': '涨跌幅'})
+            # 字段适配新接口（新接口字段：symbol/name/last_price/pct_chg）
+            if "名称" not in global_df.columns:
+                global_df = global_df.rename(columns={
+                    "symbol": "代码",
+                    "name": "名称",
+                    "last_price": "最新价",
+                    "pct_chg": "涨跌幅"
+                })
             # 筛选A50
             a50_df = global_df[global_df["名称"].str.contains("A50|富时中国A50", na=False)]
             if not a50_df.empty:
@@ -76,44 +83,60 @@ class DataFetcher:
                 res.append(f"【大宗商品】美油: {oil_df.iloc[0]['最新价']}美元/桶")
             if not gold_df.empty:
                 res.append(f"黄金: {gold_df.iloc[0]['最新价']}美元/盎司")
-        
-        # 接口2:美股行情(稳定接口)
+        else:
+            res.append("【外盘期货】暂无数据（接口暂时不可用）")
+
+        # 2. 美股行情（稳定接口，无变更）
         us_df = cls.safe_fetch("美股行情", ak.stock_us_spot_em)
         if isinstance(us_df, pd.DataFrame) and not us_df.empty:
             us_key = us_df[us_df["名称"].isin(["道琼斯", "纳斯达克", "标普500"])]
             if not us_key.empty:
                 res.append("【隔夜美股】\n" + us_key[["名称", "最新价", "涨跌幅"]].to_string(index=False))
-        
-        # 接口3:离岸人民币(稳定接口)
-        cnh_df = cls.safe_fetch("离岸人民币", ak.currency_boc_safe_infer)
+        else:
+            res.append("【隔夜美股】暂无数据（接口暂时不可用）")
+
+        # 3. 离岸人民币（替换失效的currency_boc_safe_infer为新版接口）
+        cnh_df = cls.safe_fetch("离岸人民币", ak.currency_boc_safe)
         if isinstance(cnh_df, pd.DataFrame) and not cnh_df.empty:
+            # 筛选美元兑人民币（字段适配新接口）
             cnh_row = cnh_df[cnh_df["货币名称"] == "美元"]
             if not cnh_row.empty:
                 res.append(f"\n【离岸人民币】1美元兑CNH: {cnh_row['现汇买入价'].values[0]}")
-        
-        return "\n".join(res) if res else "【外围行情】暂无数据(接口暂时不可用)"
+        else:
+            res.append("\n【离岸人民币】暂无数据（接口暂时不可用）")
+
+        return "\n".join(res)
 
     @classmethod
     def get_macro_data(cls) -> str:
-        """获取宏观数据(容错处理)"""
+        """获取宏观数据（全容错）"""
         res = []
+        # 制造业PMI
         pmi_df = cls.safe_fetch("制造业PMI", ak.macro_china_pmi_yearly)
         if isinstance(pmi_df, pd.DataFrame) and not pmi_df.empty and len(pmi_df) >= 2:
             res.append(f"【制造业PMI】最新值: {pmi_df['value'].iloc[-1]}%, 前值: {pmi_df['value'].iloc[-2]}%")
+        else:
+            res.append("【制造业PMI】暂无数据（接口暂时不可用）")
         
+        # CPI通胀
         cpi_df = cls.safe_fetch("CPI通胀", ak.macro_china_cpi_yearly)
         if isinstance(cpi_df, pd.DataFrame) and not cpi_df.empty and len(cpi_df) >= 2:
             res.append(f"【CPI通胀】最新值: {cpi_df['value'].iloc[-1]}%, 前值: {cpi_df['value'].iloc[-2]}%")
+        else:
+            res.append("【CPI通胀】暂无数据（接口暂时不可用）")
         
+        # 央行逆回购
         repo_df = cls.safe_fetch("央行逆回购", ak.pboc_open_market_operation_em)
         if isinstance(repo_df, pd.DataFrame) and not repo_df.empty:
-            res.append(f"\n【央行逆回购】{repo_df.iloc[0]['日期']}操作{repo_df.iloc[0]['交易量']}亿元,中标利率{repo_df.iloc[0]['中标利率']}%")
+            res.append(f"\n【央行逆回购】{repo_df.iloc[0]['日期']}操作{repo_df.iloc[0]['交易量']}亿元，中标利率{repo_df.iloc[0]['中标利率']}%")
+        else:
+            res.append("\n【央行逆回购】暂无数据（接口暂时不可用）")
         
-        return "\n".join(res) if res else "【宏观数据】暂无数据(接口暂时不可用)"
+        return "\n".join(res)
 
     @classmethod
     def get_cls_news(cls) -> List[str]:
-        """获取财联社盘前快讯(容错+反爬)"""
+        """获取财联社盘前快讯（反爬+容错）"""
         try:
             resp = cls.safe_fetch(
                 "财联社快讯",
@@ -133,9 +156,9 @@ class DataFetcher:
 
     @classmethod
     def get_stock_announcements(cls) -> List[str]:
-        """获取个股公告(Tushare可选)"""
+        """获取个股公告（Tushare可选，无Token不影响运行）"""
         if not cfg.TUSHARE_TOKEN:
-            return ["【个股公告】未配置TUSHARE_TOKEN(可选,不影响其他功能)"]
+            return ["【个股公告】未配置TUSHARE_TOKEN（可选，不影响其他功能）"]
         try:
             import tushare as ts
             ts.set_token(cfg.TUSHARE_TOKEN)
@@ -147,7 +170,7 @@ class DataFetcher:
         except Exception as e:
             return [f"【获取失败】个股公告: {str(e)[:50]}"]
 
-# ==================== 事件解析(空数据不报错) ====================
+# ==================== 事件解析（空数据不报错） ====================
 class EventParser:
     @staticmethod
     def parse_news(news: List[str]) -> List[EventSignal]:
@@ -178,12 +201,12 @@ class EventParser:
                 events.append(EventSignal(ts_code=ts_code, event_type="restructuring", direction=1, strength=0.9, decay_hours=24, source="cninfo"))
         return events
 
-# ==================== 双轨选股引擎(空池不报错,明确提示) ====================
+# ==================== 双轨选股引擎（空池不报错，明确提示） ====================
 class AlphaEngine:
     @staticmethod
     def get_base_scores(is_aggressive: bool) -> Dict[str, float]:
-        # 【必须自己填】关注的股票池,格式:{"股票代码.交易所": {"name": "简称", "roe": ROE, "vol": 波动率, "ret_20d": 20日涨幅}}
-        stock_pool = {}  # 空池不影响推送,仅提示未配置
+        # 【必须自己填】关注的股票池，格式：{"股票代码.交易所": {"name": "简称", "roe": ROE, "vol": 波动率, "ret_20d": 20日涨幅}}
+        stock_pool = {}  # 空池不影响推送，仅提示未配置
         if not stock_pool:
             return {}
         scores = {}
@@ -226,37 +249,37 @@ class AlphaEngine:
             "aggressive": [{"ts_code": k, "score": v, "reason": "事件驱动"} for k, v in aggro]
         }
 
-# ==================== 推送渲染(优先推送,落盘失败不影响接收) ====================
+# ==================== 推送渲染（优先推送，落盘失败不影响接收） ====================
 class PushRenderer:
     @staticmethod
     def render(alpha_book: Dict, raw: Dict) -> str:
         date = datetime.now().strftime("%Y年%m月%d日")
         md = f"# 📈 买方Alpha早参 · {date}\n\n## 【外围全景】\n{raw.get('global', '暂无数据')}\n\n## 【宏观脉搏】\n{raw.get('macro', '暂无数据')}\n\n"
-        md += "## 【稳健派 · 核心底仓】(60-80%仓位)\n"
+        md += "## 【稳健派 · 核心底仓】（60-80%仓位）\n"
         if alpha_book.get("stable"):
             for s in alpha_book["stable"]:
                 md += f"- **{s['ts_code']}** | 评分: `{s['score']}` | {s['reason']}\n"
         else:
-            md += "- 【提示】未配置股票池,暂无选股结果(请在AlphaEngine中填写关注的股票)\n"
-        md += "\n## 【激进派 · 冲锋号角】(20-40%仓位)\n"
+            md += "- 【提示】未配置股票池，暂无选股结果（请在AlphaEngine中填写关注的股票）\n"
+        md += "\n## 【激进派 · 冲锋号角】（20-40%仓位）\n"
         if alpha_book.get("aggressive"):
             for s in alpha_book["aggressive"]:
                 md += f"- **{s['ts_code']}** | 评分: `{s['score']}` | {s['reason']}\n"
         else:
-            md += "- 【提示】未配置股票池,暂无选股结果(请在AlphaEngine中填写关注的股票)\n"
+            md += "- 【提示】未配置股票池，暂无选股结果（请在AlphaEngine中填写关注的股票）\n"
         md += "\n---\n### 【盘前快讯】\n"
         for news in raw.get("news", []):
             md += f"- {news}\n"
         md += "\n---\n### 【个股公告】\n"
         for ann in raw.get("anns", []):
             md += f"{ann}\n"
-        md += "\n---\n*数据来源:交易所/央行/财联社 | 不构成投资建议*"
+        md += "\n---\n*数据来源：交易所/央行/财联社 | 不构成投资建议*"
         return md
 
     @staticmethod
     def push(content: str) -> bool:
         if not cfg.PUSHPLUS_TOKEN:
-            print("【提示】未配置PUSHPLUS_TOKEN,请到GitHub Secrets中配置")
+            print("【提示】未配置PUSHPLUS_TOKEN，请到GitHub Secrets中配置")
             return False
         try:
             resp = requests.post(
@@ -276,7 +299,7 @@ class PushRenderer:
             print(f"【错误】推送异常: {str(e)[:50]}")
             return False
 
-# ==================== 主流程(优先推送,绝不阻断) ====================
+# ==================== 主流程（优先推送，绝不阻断） ====================
 def main():
     print("=" * 50)
     print("B2.1 买方Alpha早参 · 启动中...")
@@ -288,19 +311,19 @@ def main():
         "news": DataFetcher.get_cls_news(),
         "anns": DataFetcher.get_stock_announcements()
     }
-    print("原始数据爬取完成(部分失败会显示提示,不影响后续流程)")
+    print("原始数据爬取完成（部分失败会显示提示，不影响后续流程）")
     print("\n[Step 2/4] 解析事件信号...")
     events = EventParser.parse_news(raw["news"]) + EventParser.parse_announcements(raw["anns"])
     print(f"共解析到 {len(events)} 个有效事件信号")
     print("\n[Step 3/4] 双轨选股中...")
     alpha_book = AlphaEngine.select_stocks(events)
-    print(f"稳健派选中 {len(alpha_book['stable'])} 只,激进派选中 {len(alpha_book['aggressive'])} 只")
-    print("\n[Step 4/4] 渲染并推送至微信(优先执行,落盘失败不影响推送)...")
+    print(f"稳健派选中 {len(alpha_book['stable'])} 只，激进派选中 {len(alpha_book['aggressive'])} 只")
+    print("\n[Step 4/4] 渲染并推送至微信（优先执行，落盘失败不影响推送）...")
     content = PushRenderer.render(alpha_book, raw)
     PushRenderer.push(content)
     with open("raw_news.txt", "w", encoding="utf-8") as f:
         f.write(content)
-    print("\n[完成] 原始数据已生成本地文件,等待Actions落盘")
+    print("\n[完成] 原始数据已生成本地文件，等待Actions落盘")
     print("=" * 50)
 
 if __name__ == "__main__":

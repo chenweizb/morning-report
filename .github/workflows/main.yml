@@ -1,0 +1,24 @@
+name: Morning Report
+
+on:
+  schedule:
+    # 重点改这里！北京时间每天早上7:45，不用再算UTC时差啦
+    - cron: '45 7 * * *'
+      timezone: 'Asia/Shanghai'  # 明确指定上海时区，直接写北京时间就行
+  workflow_dispatch:    # 允许手动点击运行
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4
+      - name: Run script
+        run: |
+          python daily_morning.py

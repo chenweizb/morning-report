@@ -1,49 +1,30 @@
-name: 盘前早报自动推送（全周7:45·北京时间）
-
+name: 盘前早报+B2.1实盘系统
 on:
-  # 手动测试按钮，随时可点验证
-  workflow_dispatch:
-  # 定时触发：北京时间周一至周日7:45
-  # UTC时间=北京时间-8小时 → 7:45-8h=前一天23:45
-  # 星期参数0=周日、1=周一…6=周六，覆盖全周
+  workflow_dispatch:  # 支持手动触发
   schedule:
-    - cron: '45 23 * * 0-6'
-      timezone: 'Asia/Shanghai'  # 强制指定北京时间，彻底规避时区坑
-
+    - cron: '45 23 * * 0-6'  # 北京时间7:45全周推送（UTC+8）
+      timezone: 'Asia/Shanghai'
 jobs:
-  send_morning_report:
+  run:
     runs-on: ubuntu-latest
     steps:
-      # 第一步：拉取最新代码
-      - name: 拉取最新代码
-        uses: actions/checkout@v4
-
-      # 第二步：配置Python 3.10环境
-      - name: 配置Python环境
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-
-      # 第三步：安装所有依赖（含akshare/tushare，用清华镜像加速，解决海外服务器安装慢问题）
-      - name: 安装依赖库
+      - name: 安装依赖（用清华镜像加速，避免超时）
         run: |
           python -m pip install --upgrade pip
-          pip install -i https://pypi.tuna.tsinghua.edu.cn/simple/ requests beautifulsoup4 akshare tushare pandas
-
-      # 第四步：运行早报脚本，输出落盘到report.txt（核心修复：避免多行内容转义失败导致的空白推送）
-      - name: 运行早报脚本并生成报告文件
-        run: python daily_morning.py > report.txt
-
-      # 第五步：推送结果到微信（PushPlus）
-      # 读取report.txt的内容，彻底解决空白推送问题
-      - name: 推送早报到微信（PushPlus）
+          pip install -i https://pypi.tuna.tsinghua.edu.cn/simple/ akshare requests pandas tushare
+      - name: 运行主程序
+        env:
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}  # 从GitHub Secrets读取Token，不泄露
+          TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}    # 从GitHub Secrets读取Token，不泄露
+        run: python daily_morning.py
+      - name: 落盘原始数据（自动提交到仓库，供回溯）
         run: |
-          CONTENT=$(cat report.txt)
-          curl -X POST "https://www.pushplus.plus/send" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "token": "${{ secrets.PUSHPLUS_TOKEN }}",
-              "title": "盘前早报 $(date +%Y-%m-%d)",
-              "content": "'"${CONTENT}"'",
-              "template": "markdown"
-            }'
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add raw_news.txt
+          git commit -m "Daily update: $(date +'%Y-%m-%d')" || echo "No changes"
+          git push

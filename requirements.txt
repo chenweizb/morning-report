@@ -1,4 +1,4 @@
-akshare>=1.16.60  # 必须≥1.16.60，否则逆回购接口不可用
+akshare>=1.16.60
 requests>=2.31.0
 pandas>=2.0.0
 beautifulsoup4>=4.12.0

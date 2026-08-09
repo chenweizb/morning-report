@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# B2.1 买方Alpha早参 · 终极稳定全量版（适配AkShare 1.16+/动态字段匹配/零崩溃/优先推送）
+# B2.1 买方Alpha早参 · 终极稳定全量版（适配AkShare 1.16+/全动态字段匹配/零崩溃/优先推送）
 import os
 import re
 import time
@@ -40,7 +40,7 @@ class EventSignal:
     decay_hours: int = 12  # 事件有效期
     source: str = ""  # 来源：cls/央行/交易所
 
-# ==================== 数据爬取（全接口容错+动态字段适配，彻底解决KeyError） ====================
+# ==================== 数据爬取（全接口容错+动态字段适配，彻底解决接口变动问题） ====================
 class DataFetcher:
     @staticmethod
     def safe_fetch(label: str, func, *args, **kwargs) -> Any:
@@ -49,123 +49,149 @@ class DataFetcher:
             try:
                 time.sleep(random.uniform(*cfg.DELAY_RANGE))
                 result = func(*args, **kwargs)
-                if result is not None:
+                if result is not None and not (isinstance(result, pd.DataFrame) and result.empty):
                     return result
             except Exception as e:
                 if i == cfg.RETRY_TIMES:
-                    return f"【获取失败】{label}: {str(e)[:50]}"
-        return f"【获取失败】{label}: 重试{cfg.RETRY_TIMES}次后仍失败"
+                    print(f"⚠️ 【{label}】抓取失败（已重试{cfg.RETRY_TIMES}次）：{str(e)[:50]}")
+                    return None
+        return None
 
     @classmethod
     def get_global_overnight(cls) -> str:
         """获取隔夜外围行情（全接口适配AkShare 1.16+）"""
         res = []
+        res.append("🌍 **【外围全景】**")
         
-        # 1. 外盘期货（替换失效接口，动态适配字段）
+        # 1. 外盘期货（动态适配字段）
         global_df = cls.safe_fetch("外盘期货", ak.futures_global_spot_em)
-        if isinstance(global_df, pd.DataFrame) and not global_df.empty:
-            # 动态适配新接口字段（新接口字段可能为symbol/name/last_price/pct_chg）
-            if "名称" not in global_df.columns:
-                rename_map = {}
-                for col in global_df.columns:
-                    if "symbol" in col.lower():
-                        rename_map[col] = "代码"
-                    elif "name" in col.lower():
-                        rename_map[col] = "名称"
-                    elif "price" in col.lower() or "last" in col.lower():
-                        rename_map[col] = "最新价"
-                    elif "pct" in col.lower() or "chg" in col.lower():
-                        rename_map[col] = "涨跌幅"
+        if isinstance(global_df, pd.DataFrame):
+            # 动态适配新接口字段
+            rename_map = {}
+            for col in global_df.columns:
+                col_lower = col.lower()
+                if "symbol" in col_lower or "代码" in col:
+                    rename_map[col] = "代码"
+                elif "name" in col_lower or "名称" in col:
+                    rename_map[col] = "名称"
+                elif "price" in col_lower or "最新价" in col or "last" in col_lower:
+                    rename_map[col] = "最新价"
+                elif "pct" in col_lower or "涨跌幅" in col or "涨跌幅" in col_lower:
+                    rename_map[col] = "涨跌幅"
+            if rename_map:
                 global_df = global_df.rename(columns=rename_map)
             
             # 筛选A50
-            a50_mask = global_df["名称"].str.contains("A50|富时中国A50", case=False, na=False)
-            if a50_mask.any():
-                a50_df = global_df[a50_mask]
-                res.append(f"【A50期货】最新价: {a50_df.iloc[0]['最新价']}, 涨跌幅: {a50_df.iloc[0]['涨跌幅']}%")
+            if "名称" in global_df.columns:
+                a50_mask = global_df["名称"].str.contains("A50|富时中国A50", case=False, na=False)
+                if a50_mask.any():
+                    a50_df = global_df[a50_mask]
+                    res.append(f"  - **A50期货**：最新价 {a50_df.iloc[0]['最新价']}，涨跌幅 {a50_df.iloc[0]['涨跌幅']}%")
             
             # 筛选原油/黄金
-            oil_mask = global_df["名称"].str.contains("原油|WTI", case=False, na=False)
-            gold_mask = global_df["名称"].str.contains("黄金|COMEX", case=False, na=False)
-            if oil_mask.any():
-                oil_df = global_df[oil_mask]
-                res.append(f"【大宗商品】美油: {oil_df.iloc[0]['最新价']}美元/桶")
-            if gold_mask.any():
-                gold_df = global_df[gold_mask]
-                res.append(f"黄金: {gold_df.iloc[0]['最新价']}美元/盎司")
+            if "名称" in global_df.columns:
+                oil_mask = global_df["名称"].str.contains("原油|WTI", case=False, na=False)
+                gold_mask = global_df["名称"].str.contains("黄金|COMEX", case=False, na=False)
+                if oil_mask.any():
+                    oil_df = global_df[oil_mask]
+                    res.append(f"  - **大宗商品**：美油 {oil_df.iloc[0]['最新价']}美元/桶")
+                if gold_mask.any():
+                    gold_df = global_df[gold_mask]
+                    res.append(f"  - **黄金**：{gold_df.iloc[0]['最新价']}美元/盎司")
         else:
-            res.append("【外盘期货】暂无数据（接口暂时不可用）")
+            res.append("  - 外盘期货数据暂缺")
 
         # 2. 美股行情（稳定接口）
         us_df = cls.safe_fetch("美股行情", ak.stock_us_spot_em)
-        if isinstance(us_df, pd.DataFrame) and not us_df.empty:
+        if isinstance(us_df, pd.DataFrame) and "名称" in us_df.columns:
             us_key = us_df[us_df["名称"].isin(["道琼斯", "纳斯达克", "标普500"])]
             if not us_key.empty:
-                res.append("【隔夜美股】\n" + us_key[["名称", "最新价", "涨跌幅"]].to_string(index=False))
+                res.append("  - **隔夜美股**：")
+                for _, row in us_key.iterrows():
+                    res.append(f"    - {row['名称']}：{row['最新价']}，涨跌幅 {row['涨跌幅']}%")
         else:
-            res.append("【隔夜美股】暂无数据（接口暂时不可用）")
+            res.append("  - 美股数据暂缺")
 
-        # 3. 离岸人民币（终极修复：适配AkShare 1.16+新接口，无'货币名称'列）
+        # 3. 离岸人民币（动态匹配美元列）
         cnh_df = cls.safe_fetch("离岸人民币", ak.currency_boc_safe)
-        if isinstance(cnh_df, pd.DataFrame) and not cnh_df.empty:
-            # 动态寻找美元列（新接口直接将货币作为列名）
+        if isinstance(cnh_df, pd.DataFrame):
             usd_cols = [col for col in cnh_df.columns if "美元" in col]
             if usd_cols and pd.notna(cnh_df.iloc[0][usd_cols[0]]):
                 cnh_value = cnh_df.iloc[0][usd_cols[0]]
-                res.append(f"\n【离岸人民币】1美元兑CNH: {cnh_value}")
+                res.append(f"  - **离岸人民币**：1美元兑CNH {cnh_value}")
             else:
-                res.append("\n【离岸人民币】暂无有效数据（接口返回结构异常）")
+                res.append("  - 离岸人民币汇率数据暂缺")
         else:
-            res.append("\n【离岸人民币】暂无数据（接口暂时不可用）")
+            res.append("  - 离岸人民币汇率数据暂缺")
 
         return "\n".join(res)
 
     @classmethod
     def get_macro_data(cls) -> str:
-        """获取宏观数据（终极动态字段适配，彻底解决KeyError: 'value'）"""
+        """获取宏观数据（全动态字段匹配，彻底解决KeyError/AttributeError）"""
         res = []
+        res.append("\n🇨🇳 **【宏观脉搏】**")
         
-        # 制造业PMI（动态匹配含“制造业”的列，不再依赖固定'value'列）
+        # 1. 制造业PMI（动态匹配含“制造业”的列）
         pmi_df = cls.safe_fetch("制造业PMI", ak.macro_china_pmi_yearly)
-        if isinstance(pmi_df, pd.DataFrame) and not pmi_df.empty:
-            # 动态寻找制造业相关列
+        if isinstance(pmi_df, pd.DataFrame):
             mfg_cols = [col for col in pmi_df.columns if "制造业" in col]
-            if mfg_cols:
+            if mfg_cols and len(pmi_df) >= 1:
                 val_col = mfg_cols[0]
-                latest_val = pmi_df[val_col].iloc[0]
-                prev_val = pmi_df[val_col].iloc[1] if len(pmi_df) > 1 else "N/A"
-                res.append(f"【制造业PMI】最新值: {latest_val}%, 前值: {prev_val}%")
+                latest_val = pmi_df.iloc[0][val_col]
+                prev_val = pmi_df.iloc[1][val_col] if len(pmi_df) >= 2 else "N/A"
+                date_col = [col for col in pmi_df.columns if "日期" in col or "月份" in col]
+                date_str = pmi_df.iloc[0][date_col[0]] if date_col else "未知时间"
+                res.append(f"  - **制造业PMI**：{latest_val}%（{date_str}，前值 {prev_val}%）")
             else:
-                res.append("【制造业PMI】暂无有效数据（未找到制造业相关列）")
+                res.append("  - 制造业PMI数据暂缺")
         else:
-            res.append("【制造业PMI】暂无数据（接口暂时不可用）")
-        
-        # CPI通胀（动态匹配含“CPI”的列）
+            res.append("  - 制造业PMI数据暂缺")
+
+        # 2. CPI通胀（动态匹配含“CPI”/“同比”的列）
         cpi_df = cls.safe_fetch("CPI通胀", ak.macro_china_cpi_yearly)
-        if isinstance(cpi_df, pd.DataFrame) and not cpi_df.empty:
-            cpi_cols = [col for col in cpi_df.columns if "CPI" in col or "消费价格" in col]
-            if cpi_cols:
+        if isinstance(cpi_df, pd.DataFrame):
+            cpi_cols = [col for col in cpi_df.columns if "CPI" in col or "同比" in col]
+            if cpi_cols and len(cpi_df) >= 1:
                 val_col = cpi_cols[0]
-                latest_val = cpi_df[val_col].iloc[0]
-                prev_val = cpi_df[val_col].iloc[1] if len(cpi_df) > 1 else "N/A"
-                res.append(f"【CPI通胀】最新值: {latest_val}%, 前值: {prev_val}%")
+                latest_val = pmi_df.iloc[0][val_col] if "pmi_df" in locals() else cpi_df.iloc[0][val_col]
+                prev_val = cpi_df.iloc[1][val_col] if len(cpi_df) >= 2 else "N/A"
+                date_col = [col for col in cpi_df.columns if "日期" in col or "月份" in col]
+                date_str = cpi_df.iloc[0][date_col[0]] if date_col else "未知时间"
+                res.append(f"  - **CPI通胀**：{latest_val}%（{date_str}，前值 {prev_val}%）")
             else:
-                res.append("【CPI通胀】暂无有效数据（未找到CPI相关列）")
+                res.append("  - CPI通胀数据暂缺")
         else:
-            res.append("【CPI通胀】暂无数据（接口暂时不可用）")
-        
-        # 央行逆回购
-        repo_df = cls.safe_fetch("央行逆回购", ak.pboc_open_market_operation_em)
-        if isinstance(repo_df, pd.DataFrame) and not repo_df.empty:
-            res.append(f"\n【央行逆回购】{repo_df.iloc[0]['日期']}操作{repo_df.iloc[0]['交易量']}亿元，中标利率{repo_df.iloc[0]['中标利率']}%")
+            res.append("  - CPI通胀数据暂缺")
+
+        # 3. 央行逆回购（已修复为最新接口）
+        repo_df = cls.safe_fetch("央行逆回购", ak.macro_china_gksccz)
+        if isinstance(repo_df, pd.DataFrame) and len(repo_df) >= 1:
+            latest = repo_df.iloc[0]
+            # 动态匹配逆回购相关字段
+            direction_col = [col for col in repo_df.columns if "正/逆回购" in col or "操作方向" in col]
+            amount_col = [col for col in repo_df.columns if "交易量" in col or "投放量" in col]
+            rate_col = [col for col in repo_df.columns if "中标利率" in col or "利率" in col]
+            term_col = [col for col in repo_df.columns if "期限" in col]
+            date_col = [col for col in repo_df.columns if "日期" in col]
+            
+            direction = latest[direction_col[0]] if direction_col else "逆回购"
+            amount = latest[amount_col[0]] if amount_col else "N/A"
+            rate = latest[rate_col[0]] if rate_col else "N/A"
+            term = latest[term_col[0]] if term_col else "N/A"
+            date_str = latest[date_col[0]] if date_col else "未知时间"
+            
+            res.append(f"  - **央行操作**：{date_str}开展{direction} {amount}亿元，期限{term}天，中标利率{rate}%")
         else:
-            res.append("\n【央行逆回购】暂无数据（接口暂时不可用）")
-        
+            res.append("  - 央行逆回购数据暂缺")
+
         return "\n".join(res)
 
     @classmethod
     def get_cls_news(cls) -> List[str]:
         """获取财联社盘前快讯（反爬+容错）"""
+        res = []
+        res.append("\n📰 **【盘前快讯】**")
         try:
             resp = cls.safe_fetch(
                 "财联社快讯",
@@ -175,29 +201,46 @@ class DataFetcher:
                     timeout=cfg.TIMEOUT
                 )
             )
-            if isinstance(resp, str):
-                return [resp]
-            data = resp.json()
-            news_list = [i["content"] for i in data["data"]["list"][:5] if "盘前" in i["content"] or "早间" in i["content"]]
-            return news_list if news_list else ["【财联社快讯】今日暂无盘前快讯"]
+            if isinstance(resp, requests.Response):
+                data = resp.json()
+                news_list = [i["content"] for i in data["data"]["list"][:5] if "盘前" in i["content"] or "早间" in i["content"]]
+                if news_list:
+                    for news in news_list:
+                        res.append(f"  - {news}")
+                else:
+                    res.append("  - 今日暂无盘前快讯")
+            else:
+                res.append("  - 财联社快讯抓取失败")
         except Exception as e:
-            return [f"【获取失败】财联社快讯: {str(e)[:50]}"]
+            res.append(f"  - 财联社快讯异常：{str(e)[:50]}")
+        return res
 
     @classmethod
     def get_stock_announcements(cls) -> List[str]:
         """获取个股公告（Tushare可选，无Token不影响运行）"""
+        res = []
+        res.append("\n📑 **【个股公告】**")
         if not cfg.TUSHARE_TOKEN:
-            return ["【个股公告】未配置TUSHARE_TOKEN（可选，不影响其他功能）"]
+            res.append("  - 未配置TUSHARE_TOKEN（可选，不影响其他功能）")
+            return res
         try:
             import tushare as ts
             ts.set_token(cfg.TUSHARE_TOKEN)
             pro = ts.pro_api()
             today = datetime.now().strftime("%Y%m%d")
             anns = pro.anns(ann_date=today, fields="ts_code,title")
-            key_anns = anns[anns["title"].str.contains("业绩|重组|增持|减持|停牌|复牌")]
-            return [f"- {row['ts_code']} {row['title']}" for _, row in key_anns.head(5).iterrows()] if not key_anns.empty else ["【个股公告】今日暂无重要公告"]
+            if not anns.empty:
+                key_anns = anns[anns["title"].str.contains("业绩|重组|增持|减持|停牌|复牌")]
+                if not key_anns.empty:
+                    for _, row in key_anns.head(5).iterrows():
+                        res.append(f"  - {row['ts_code']}：{row['title']}")
+                else:
+                    res.append("  - 今日暂无重要个股公告")
+            else:
+                res.append("  - 今日暂无个股公告")
         except Exception as e:
-            return [f"【获取失败】个股公告: {str(e)[:50]}"]
+            res.append(f"  - 个股公告抓取异常：{str(e)[:50]}")
+        return res
 
 # ==================== 事件解析（空数据不报错） ====================
 class EventParser:
@@ -234,7 +277,7 @@ class EventParser:
 class AlphaEngine:
     @staticmethod
     def get_base_scores(is_aggressive: bool) -> Dict[str, float]:
-        # 【必须自己填】关注的股票池，格式：{"股票代码.交易所": {"name": "简称", "roe": ROE, "vol": 波动率, "ret_20d": 20日涨幅}}
+        # 【必填】关注股票池，格式：{"股票代码.交易所": {"name": "简称", "roe": ROE, "vol": 波动率, "ret_20d": 20日涨幅}}
         # 示例（取消注释即可测试）：
         # stock_pool = {
         #     "600519.SH": {"name": "贵州茅台", "roe": 0.25, "vol": 0.15, "ret_20d": 0.05},
@@ -288,25 +331,36 @@ class PushRenderer:
     @staticmethod
     def render(alpha_book: Dict, raw: Dict) -> str:
         date = datetime.now().strftime("%Y年%m月%d日")
-        md = f"# 📈 买方Alpha早参 · {date}\n\n## 【外围全景】\n{raw.get('global', '暂无数据')}\n\n## 【宏观脉搏】\n{raw.get('macro', '暂无数据')}\n\n"
-        md += "## 【稳健派 · 核心底仓】（60-80%仓位）\n"
+        md = f"# 📈 买方Alpha早参 · {date}\n\n"
+        
+        # 外围行情
+        md += raw.get("global", "🌍 **【外围全景】**\n  - 数据暂缺") + "\n"
+        
+        # 宏观数据
+        md += raw.get("macro", "🇨🇳 **【宏观脉搏】**\n  - 数据暂缺") + "\n"
+        
+        # 双轨选股结果
+        md += "\n## 🎯 **【双轨选股结果】**\n"
+        md += "### 【稳健派 · 核心底仓】（60-80%仓位）\n"
         if alpha_book.get("stable"):
             for s in alpha_book["stable"]:
                 md += f"- **{s['ts_code']}** | 评分: `{s['score']}` | {s['reason']}\n"
         else:
             md += "- 【提示】未配置股票池，暂无选股结果（请在AlphaEngine中填写关注的股票）\n"
-        md += "\n## 【激进派 · 冲锋号角】（20-40%仓位）\n"
+        
+        md += "\n### 【激进派 · 冲锋号角】（20-40%仓位）\n"
         if alpha_book.get("aggressive"):
             for s in alpha_book["aggressive"]:
                 md += f"- **{s['ts_code']}** | 评分: `{s['score']}` | {s['reason']}\n"
         else:
             md += "- 【提示】未配置股票池，暂无选股结果（请在AlphaEngine中填写关注的股票）\n"
-        md += "\n---\n### 【盘前快讯】\n"
-        for news in raw.get("news", []):
-            md += f"- {news}\n"
-        md += "\n---\n### 【个股公告】\n"
-        for ann in raw.get("anns", []):
-            md += f"{ann}\n"
+        
+        # 盘前快讯
+        md += "\n" + "\n".join(raw.get("news", ["📰 **【盘前快讯】**\n  - 数据暂缺"])) + "\n"
+        
+        # 个股公告
+        md += "\n" + "\n".join(raw.get("anns", ["📑 **【个股公告】**\n  - 数据暂缺"])) + "\n"
+        
         md += "\n---\n*数据来源：交易所/央行/财联社 | 不构成投资建议*"
         return md
 
@@ -318,7 +372,12 @@ class PushRenderer:
         try:
             resp = requests.post(
                 "https://www.pushplus.plus/send",
-                json={"token": cfg.PUSHPLUS_TOKEN, "title": f"买方Alpha早参 · {datetime.now().strftime('%Y-%m-%d')}", "content": content, "template": "markdown"},
+                json={
+                    "token": cfg.PUSHPLUS_TOKEN,
+                    "title": f"买方Alpha早参 · {datetime.now().strftime('%Y-%m-%d')}",
+                    "content": content,
+                    "template": "markdown"
+                },
                 headers=cfg.HEADERS,
                 timeout=cfg.TIMEOUT
             )
@@ -338,27 +397,54 @@ def main():
     print("=" * 50)
     print("B2.1 买方Alpha早参 · 启动中...")
     print("=" * 50)
-    print("\n[Step 1/4] 爬取原始数据...")
-    raw = {
-        "global": DataFetcher.get_global_overnight(),
-        "macro": DataFetcher.get_macro_data(),
-        "news": DataFetcher.get_cls_news(),
-        "anns": DataFetcher.get_stock_announcements()
-    }
-    print("原始数据爬取完成（部分失败会显示提示，不影响后续流程）")
-    print("\n[Step 2/4] 解析事件信号...")
-    events = EventParser.parse_news(raw["news"]) + EventParser.parse_announcements(raw["anns"])
-    print(f"共解析到 {len(events)} 个有效事件信号")
-    print("\n[Step 3/4] 双轨选股中...")
-    alpha_book = AlphaEngine.select_stocks(events)
-    print(f"稳健派选中 {len(alpha_book['stable'])} 只，激进派选中 {len(alpha_book['aggressive'])} 只")
-    print("\n[Step 4/4] 渲染并推送至微信（优先执行，落盘失败不影响推送）...")
-    content = PushRenderer.render(alpha_book, raw)
-    PushRenderer.push(content)
-    with open("raw_news.txt", "w", encoding="utf-8") as f:
-        f.write(content)
-    print("\n[完成] 原始数据已生成本地文件，等待Actions落盘")
-    print("=" * 50)
+    
+    try:
+        print("\n[Step 1/4] 爬取原始数据...")
+        raw = {
+            "global": DataFetcher.get_global_overnight(),
+            "macro": DataFetcher.get_macro_data(),
+            "news": DataFetcher.get_cls_news(),
+            "anns": DataFetcher.get_stock_announcements()
+        }
+        print("原始数据爬取完成（部分失败会显示提示，不影响后续流程）")
+        
+        print("\n[Step 2/4] 解析事件信号...")
+        events = EventParser.parse_news(raw["news"]) + EventParser.parse_announcements(raw["anns"])
+        print(f"共解析到 {len(events)} 个有效事件信号")
+        
+        print("\n[Step 3/4] 双轨选股中...")
+        alpha_book = AlphaEngine.select_stocks(events)
+        print(f"稳健派选中 {len(alpha_book['stable'])} 只，激进派选中 {len(alpha_book['aggressive'])} 只")
+        
+        print("\n[Step 4/4] 渲染并推送至微信（优先执行，落盘失败不影响推送）...")
+        content = PushRenderer.render(alpha_book, raw)
+        PushRenderer.push(content)
+        
+        # 落盘原始数据（失败不影响推送）
+        with open("raw_news.txt", "w", encoding="utf-8") as f:
+            f.write(content)
+        print("\n[完成] 原始数据已生成本地文件，等待Actions落盘")
+        
+    except Exception as e:
+        print(f"!!! 程序发生致命错误: {e}")
+        # 即使主程序崩溃，也尝试发送告警
+        if cfg.PUSHPLUS_TOKEN:
+            try:
+                requests.post(
+                    "https://www.pushplus.plus/send",
+                    json={
+                        "token": cfg.PUSHPLUS_TOKEN,
+                        "title": "B2.1 早报系统崩溃告警",
+                        "content": f"程序发生致命错误，请及时排查：\n```\n{e}\n```",
+                        "template": "markdown"
+                    },
+                    headers=cfg.HEADERS,
+                    timeout=cfg.TIMEOUT
+                )
+            except:
+                pass
+    finally:
+        print("=" * 50)
 
 if __name__ == "__main__":
     main()

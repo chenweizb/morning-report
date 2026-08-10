@@ -102,7 +102,7 @@ def block_global():
     # A股涨跌家数 T‑1：接口stock_a_spot_em已移除，禁用
     out.append("- **A股T‑1涨跌家数**：⚠️akshare该接口已移除，请网页手动查看。")
 
-    # 1天期国债逆回购【修复完整缩进】
+    # 1天期国债逆回购
     try:
         repo_sh = safe_block("国债逆回购", ak.bond_repo_sh)
     except AttributeError as e:
@@ -123,31 +123,10 @@ def block_global():
 
 def block_macro():
     out = ["### 🇨🇳 宏观与政策（最近披露期 · 免费公开数据源）"]
-    cpi = safe_block("CPI", ak.macro_china_cpi_yearly)
-    if isinstance(cpi, pd.DataFrame) and not cpi.empty:
-        latest = cpi.iloc[-1]
-        val = latest.get("cpi") or latest.get("value") or "N/A"
-        out.append(f"- CPI同比（最新）：{val}%")
-    else:
-        out.append("- CPI：暂无")
-
-    pmi = safe_block("PMI", ak.macro_china_pmi_yearly)
-    if isinstance(pmi, pd.DataFrame) and not pmi.empty:
-        mc = [c for c in pmi.columns if "制造业" in c or "pmi" in c.lower()]
-        if mc:
-            pmi_val = float(pmi.iloc[-1][mc[0]])
-            tag = "【扩张＞50】" if pmi_val > 50 else "【收缩＜50】"
-            out.append(f"- 制造业PMI（最新）：{pmi_val}% {tag}")
-    else:
-        out.append("- PMI：暂无")
-
-    m2 = safe_block("M2", ak.macro_china_m2)
-    if isinstance(m2, pd.DataFrame) and not m2.empty:
-        latest = m2.iloc[-1]
-        val = latest.get("m2") or latest.get("M2") or latest.get("value") or "N/A"
-        out.append(f"- M2同比（最新）：{val}%")
-    else:
-        out.append("- M2：暂无")
+    # akshare新版本删除大量macro_xxx接口，直接置为暂无，避免属性读取崩溃
+    out.append("- CPI同比：⚠️akshare旧宏观接口已移除，建议网页查询")
+    out.append("- 制造业PMI：⚠️akshare旧宏观接口已移除，建议网页查询")
+    out.append("- M2同比：⚠️akshare旧宏观接口已移除，建议网页查询")
 
     repo = safe_block("逆回购", ak.macro_china_open_market_operation)
     if isinstance(repo, pd.DataFrame) and not repo.empty:

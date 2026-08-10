@@ -89,17 +89,23 @@ def block_global():
     return "\n".join(out)
 
 def block_macro():
-    """宏观与政策（全最新接口）"""
-    out = ["### 🇨🇳 宏观与政策"]
-    
-    # CPI同比
-    cpi = safe_block("CPI", ak.macro_china_cpi_yearly)
-    if isinstance(cpi, pd.DataFrame) and not cpi.empty:
-        latest = cpi.iloc[-1]
-        val = latest.get("cpi") or latest.get("value") or "N/A"
-        out.append(f"- CPI同比（最新）：{val}%")
-    else:
-        out.append("- CPI：暂无")
+"""获取宏观指标（已修复接口报错）"""
+try:
+# 尝试获取中国央行公开市场操作数据
+# 如果获取失败，会被下面的 except 捕获，不会导致整个程序崩溃
+macro_df = ak.macro_china_gksccz()
+# 兼容处理：有时候接口返回的列名不同，这里做一下标准化
+if '操作日期' in macro_df.columns:
+    latest = macro_df.sort_values(by='操作日期', ascending=False).head(3)
+    return f"- **央行公开市场操作 (最近3期):**
+" + "
+".join([f" - {row['操作日期']} {row.get('正/逆回购', '')} {row.get('交易量', 0)}亿" for _, row in latest.iterrows()])
+else:
+# 如果列名不对，直接展示前3行数据
+return macro_df.head(3).to_string(index=False)
+except Exception as e:
+    # 只要这一段出问题，就返回错误信息，保证晨报还能发出去
+    return f"- **宏观数据获取异常**: {str(e)[:50]}"
     
     # 制造业PMI
     pmi = safe_block("PMI", ak.macro_china_pmi_yearly)

@@ -1,4 +1,4 @@
-requests>=2.31.0
+requests>=2.32
 yfinance>=0.2.40
 lxml>=5.0
-pytz>=2025.3
+pytz>=2025

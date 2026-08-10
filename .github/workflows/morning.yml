@@ -1,19 +1,19 @@
 name: 盘前晨报任务
 on:
   schedule:
-    # UTC时间23:00 = 北京时间早上7点
+    # UTC 23点 = 北京时间07点
     - cron: "0 23 * * *"
   workflow_dispatch:
 jobs:
   run:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu‑latest
     env:
       PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
     steps:
       - uses: actions/checkout@v4
-      - name: 安装依赖
+      - name: 安装python依赖
         run: |
-          python3 -m pip install -r requirements.txt
-      - name: 运行脚本
+          python3 ‑m pip install ‑r requirements.txt
+      - name: 运行盘前晨报脚本
         run: python3 morning_report.py

@@ -10,20 +10,18 @@ PUSHPLUS_TOKEN = os.environ.get("PUSHPLUS_TOKEN", "")
 HUNYUAN_API_KEY = os.environ.get("HUNYUAN_API_KEY", "")
 
 def safe_block(name, func, *args, fallback="暂无（接口未返回，不推测）", **kwargs):
-    """单块容错：任何异常都吞掉，返回 fallback，绝不向上抛"""
     try:
         r = func(*args, **kwargs)
         if r is None or (isinstance(r, pd.DataFrame) and r.empty):
             return fallback
         return r
     except Exception as e:
-        print(f"⚠️ [{name}] 异常已隔离：{str(e)[:60]}")
+        print(f"⚠️ [{name}] 隔离异常：{str(e)[:60]}")
         return fallback
 
 # 1. 全球资产 + 杠杆 + 流动性
 def block_global():
     out = ["### 🌍 全球资产 / 杠杆 / 流动性（截至北京时间07:30）"]
-    # 美股三大
     us = safe_block("美股", ak.stock_us_spot_em)
     if isinstance(us, pd.DataFrame):
         for n in ["道琼斯", "纳斯达克", "标普500"]:
@@ -33,10 +31,7 @@ def block_global():
                 out.append(f"- **{n}**：{r['最新价']} ｜ {r['涨跌幅']}%")
     else:
         out.append("- 美股：暂无")
-    # 外盘期货（多接口兜底）
-    fx = safe_block("外盘期货-em", ak.futures_global_em)
-    if not isinstance(fx, pd.DataFrame):
-        fx = safe_block("外盘期货-spot", ak.futures_global_spot_em)
+    fx = safe_block("外盘期货", ak.futures_global_spot_em)
     if isinstance(fx, pd.DataFrame):
         cols = fx.columns.tolist()
         nc = [c for c in cols if "名称" in c or "name" in c.lower()][0]
@@ -49,7 +44,6 @@ def block_global():
                 out.append(f"- **{k}**：{r[pc]} ｜ {r[pct]}%")
     else:
         out.append("- 外盘期货：暂无")
-    # 离岸人民币
     cnh = safe_block("离岸人民币", ak.currency_boc_safe)
     if isinstance(cnh, pd.DataFrame):
         usd = [c for c in cnh.columns if "美元" in c]
@@ -57,14 +51,6 @@ def block_global():
             out.append(f"- **美元兑CNH**：{cnh.iloc[-1][usd[0]]}")
     else:
         out.append("- 汇率：暂无")
-    # 两融
-    mg = safe_block("两融", ak.stock_margin_account_info)
-    if isinstance(mg, pd.DataFrame) and not mg.empty:
-        l = mg.iloc[-1]
-        out.append(f"- **两融余额**：融资 {l.get('融资余额','N/A')}亿 ｜ 融券 {l.get('融券余额','N/A')}亿 ｜ 维持担保比 {l.get('平均维持担保比例','N/A')}")
-    else:
-        out.append("- 两融余额：暂无")
-    # 美债利差
     ust = safe_block("美债", ak.bond_zh_us_rate)
     if isinstance(ust, pd.DataFrame) and not ust.empty:
         ten = [c for c in ust.columns if "10年" in c or "10Y" in c]
@@ -74,27 +60,23 @@ def block_global():
             out.append(f"- **美债10Y-2Y利差**：{round(spread,2)}bp（倒挂=衰退预期）")
     else:
         out.append("- 美债利差：暂无")
-    # VIX
-    vix = safe_block("VIX", ak.index_vix)
-    if isinstance(vix, pd.DataFrame) and not vix.empty:
-        out.append(f"- **VIX恐慌指数**：{vix.iloc[-1]['收盘价']}")
-    else:
-        out.append("- VIX：暂无")
     return "\n".join(out)
 
 # 2. 宏观与政策
 def block_macro():
     out = ["### 🇨🇳 宏观与政策"]
-    cpi = safe_block("CPI", ak.macro_china_cpi_yearly)
+    cpi = safe_block("CPI", ak.macro_china_cpi)
     if isinstance(cpi, pd.DataFrame) and not cpi.empty:
-        out.append(f"- CPI同比（最新）：{cpi.iloc[-1]['value']}% ｜ 前值 {cpi.iloc[-2]['value'] if len(cpi)>1 else 'N/A'}%")
+        latest = cpi.iloc[-1]
+        val = latest.get("cpi") or latest.get("value") or "N/A"
+        out.append(f"- CPI同比（最新）：{val}")
     else:
         out.append("- CPI：暂无")
-    pmi = safe_block("PMI", ak.macro_china_pmi_yearly)
+    pmi = safe_block("PMI", ak.macro_china_pmi)
     if isinstance(pmi, pd.DataFrame) and not pmi.empty:
-        mc = [c for c in pmi.columns if "制造业" in c]
+        mc = [c for c in pmi.columns if "制造业" in c or "pmi" in c.lower()]
         if mc:
-            out.append(f"- 制造业PMI（最新）：{pmi.iloc[-1][mc[0]]}% ｜ 前值 {pmi.iloc[-2][mc[0]] if len(pmi)>1 else 'N/A'}%")
+            out.append(f"- 制造业PMI（最新）：{pmi.iloc[-1][mc[0]]}")
     else:
         out.append("- PMI：暂无")
     repo = safe_block("逆回购", ak.macro_china_gksccz)
@@ -105,12 +87,12 @@ def block_macro():
         out.append("- 逆回购：暂无")
     return "\n".join(out)
 
-# 3. 财联社隔夜快讯
+# 3. 隔夜时政/财经快讯（财联社，失败降级）
 def block_news():
     out = ["### 📰 隔夜时政 / 财经快讯（财联社）"]
     df = safe_block("财联社", ak.cls_telegraph)
     if isinstance(df, pd.DataFrame) and "content" in df.columns:
-        kw = ["美联储","央行","国务院","发改委","证监会","地缘","关税","制裁","非农","CPI","降息","降准","逆回购","汇率","A股","港股","美股","两融"]
+        kw = ["美联储","央行","国务院","发改委","证监会","地缘","关税","制裁","非农","CPI","降息","降准","逆回购","汇率","A股","港股","美股"]
         f = df[df["content"].str.contains("|".join(kw), na=False)]
         f = f[f["content"].notna()]
         if not f.empty:
@@ -119,10 +101,10 @@ def block_news():
         else:
             out.append("- 隔夜无匹配重大事件（不编造）")
     else:
-        out.append("- 新闻源：暂无")
+        out.append("- 新闻源：暂无（接口暂不可用）")
     return "\n".join(out)
 
-# 4. 混元永久免费 lite 反向研判
+# 4. 永久免费 hunyuan-lite 反向研判
 def llm_view(snapshot: str):
     if not HUNYUAN_API_KEY:
         return "### 🎯 研判（未配置HUNYUAN_API_KEY，静态降级）\n- 依据上方真实数据自行研判；集合竞价确认方向，严控仓位。"
@@ -178,7 +160,7 @@ def main():
     except Exception:
         pass
     print("✅ 执行完毕")
-    sys.exit(0)   # 永远正常退出，不再让 Actions 标红
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()

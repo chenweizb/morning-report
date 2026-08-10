@@ -17,9 +17,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libxml2-dev libxslt1-dev zlib1g-dev python3-dev pkg-config
           python -m pip install --upgrade pip
+          # 绝大多数包走清华源加速
           pip install -i https://pypi.tuna.tsinghua.edu.cn/simple/ -r requirements.txt
-          pip install -U akshare
-          python -c "import akshare; print('云端AkShare版本:', akshare.__version__)"
+          # akshare强制使用官方pypi源，解决清华镜像同步滞后拿不到新版本的问题
+          pip install "akshare>=1.18.83" -i https://pypi.org/simple
+          # 打印云端实际版本，用于日志排查
+          python -c "import akshare; print('✅云端AkShare版本：', akshare.__version__)"
       - name: 运行主程序
         env:
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}

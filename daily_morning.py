@@ -123,23 +123,11 @@ def block_global():
 
 def block_macro():
     out = ["### 🇨🇳 宏观与政策（最近披露期 · 免费公开数据源）"]
-    # akshare新版本删除大量macro_xxx接口，直接置为暂无，避免属性读取崩溃
+    # akshare新版本删除大量macro_xxx接口，全部置为暂无，避免属性读取崩溃
     out.append("- CPI同比：⚠️akshare旧宏观接口已移除，建议网页查询")
     out.append("- 制造业PMI：⚠️akshare旧宏观接口已移除，建议网页查询")
     out.append("- M2同比：⚠️akshare旧宏观接口已移除，建议网页查询")
-
-    repo = safe_block("逆回购", ak.macro_china_open_market_operation)
-    if isinstance(repo, pd.DataFrame) and not repo.empty:
-        reverse = repo[repo["正/逆回购"].astype(str).str.contains("逆回购", na=False)]
-        if not reverse.empty:
-            l = reverse.iloc[-1]
-            vol = l.get("交易量") or l.get("deal_amount") or "N/A"
-            rate = l.get("中标利率") or l.get("rate") or "N/A"
-            out.append(f"- 央行逆回购（最近一次）：{vol}亿 ｜ 利率 {rate}%")
-        else:
-            out.append("- 逆回购：近期无操作")
-    else:
-        out.append("- 逆回购：暂无（接口暂不可用）")
+    out.append("- 央行逆回购：⚠️akshare旧宏观接口已移除，建议网页查询")
     return "\n".join(out)
 
 

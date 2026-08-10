@@ -2,7 +2,7 @@ name: 07:30 全球晨报
 on:
   workflow_dispatch:
   schedule:
-    - cron: '30 23 * * *'
+    - cron: '30 23 * * *'      # UTC 23:30 = 北京时间07:30
       timezone: 'Asia/Shanghai'
 jobs:
   run:
@@ -12,7 +12,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-      - name: 系统依赖 + Python依赖
+      - name: 安装系统依赖+Python依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y libxml2-dev libxslt1-dev zlib1g-dev python3-dev pkg-config
@@ -25,7 +25,7 @@ jobs:
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
           HUNYUAN_API_KEY: ${{ secrets.HUNYUAN_API_KEY }}
         run: python daily_morning.py
-      - name: 落盘
+      - name: 落盘原始数据
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"

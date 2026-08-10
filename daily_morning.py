@@ -99,14 +99,8 @@ def block_global():
     else:
         out.append("- 北向资金(T‑1)：暂无")
 
-    # A股涨跌家数 T‑1
-    a_stat = safe_block("A股涨跌统计", ak.stock_a_spot_em)
-    if isinstance(a_stat, pd.DataFrame):
-        up_cnt = len(a_stat[a_stat["涨跌幅"] > 0])
-        down_cnt = len(a_stat[a_stat["涨跌幅"] < 0])
-        out.append(f"- **A股T‑1涨跌家数**：上涨{up_cnt}家 / 下跌{down_cnt}家")
-    else:
-        out.append("- A股涨跌家数(T‑1)：暂无")
+    # A股涨跌家数 T‑1：接口stock_a_spot_em已移除，禁用
+    out.append("- **A股T‑1涨跌家数**：⚠️akshare该接口已移除，请网页手动查看。")
 
     # 1天期国债逆回购
     repo_sh = safe_block("国债逆回购", ak.bond_repo_sh)

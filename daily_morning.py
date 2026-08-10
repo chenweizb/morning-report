@@ -80,7 +80,11 @@ def block_global():
         out.append("- 美债利差：暂无")
     
     # VIX恐慌指数
-    vix = safe_block("VIX", ak.index_vix)
+    vix = safe_block("VIX", ak.index_option_300etf_qvix)
+
+except Exception:
+
+vix = "- 恐慌指数(VIX)：获取失败"
     if isinstance(vix, pd.DataFrame) and not vix.empty:
         out.append(f"- **VIX恐慌指数**：{vix.iloc[-1]['收盘价']}")
     else:

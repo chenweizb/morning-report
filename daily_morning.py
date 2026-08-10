@@ -6,12 +6,10 @@ import akshare as ak
 import pandas as pd
 from datetime import datetime
 
-# ================= 配置区（密钥从GitHub Secrets读取，和Secrets变量名完全一致） =================
 PUSHPLUS_TOKEN = os.environ.get("PUSHPLUS_TOKEN", "")
 HUNYUAN_API_KEY = os.environ.get("HUNYUAN_API_KEY", "")
 
 def safe_block(name, func, *args, fallback="暂无（接口未返回，不推测）", **kwargs):
-    """单块容错：接口报错/空数据直接返回fallback，不中断整体流程"""
     try:
         r = func(*args, **kwargs)
         if r is None or (isinstance(r, pd.DataFrame) and r.empty):
@@ -22,21 +20,21 @@ def safe_block(name, func, *args, fallback="暂无（接口未返回，不推测
         return fallback
 
 def block_global():
-    """全球资产+杠杆+流动性（所有接口均核对AkShare 1.18.x官方文档，100%存在）"""
-    out = ["### 🌍 全球资产 / 杠杆 / 流动性（截至北京时间07:30）"]
-    
-    # 美股三大指数（官方接口：stock_us_spot_em）
+    """【实时层+收盘层】全球资产/杠杆/流动性——标注各自时效"""
+    out = ["### 🌍 全球资产 / 杠杆 / 流动性（北京时间07:30快照）"]
+
+    # 美股三大指数（前一交易日收盘）
     us = safe_block("美股", ak.stock_us_spot_em)
     if isinstance(us, pd.DataFrame):
         for n in ["道琼斯", "纳斯达克", "标普500"]:
             row = us[us["名称"] == n]
             if not row.empty:
                 r = row.iloc[0]
-                out.append(f"- **{n}**：{r['最新价']} ｜ {r['涨跌幅']}%")
+                out.append(f"- **{n}**（昨收盘）：{r['最新价']} ｜ {r['涨跌幅']}%")
     else:
         out.append("- 美股：暂无")
-    
-    # 外盘期货（官方接口：futures_global_spot_em）
+
+    # 外盘期货（07:30附近最新报价，时效性最强）
     fx = safe_block("外盘期货", ak.futures_global_spot_em)
     if isinstance(fx, pd.DataFrame):
         cols = fx.columns.tolist()
@@ -47,52 +45,47 @@ def block_global():
             row = fx[fx[nc].str.contains(k, na=False)]
             if not row.empty:
                 r = row.iloc[0]
-                out.append(f"- **{k}**：{r[pc]} ｜ {r[pct]}%")
+                out.append(f"- **{k}**（实时）：{r[pc]} ｜ {r[pct]}%")
     else:
         out.append("- 外盘期货：暂无")
-    
-    # 离岸人民币（官方接口：currency_boc_safe）
+
+    # 离岸人民币（上一交易日中间价）
     cnh = safe_block("离岸人民币", ak.currency_boc_safe)
     if isinstance(cnh, pd.DataFrame):
         usd = [c for c in cnh.columns if "美元" in c]
         if usd:
-            out.append(f"- **美元兑CNH**：{cnh.iloc[-1][usd[0]]}")
+            out.append(f"- **美元兑CNH**（昨中间价）：{cnh.iloc[-1][usd[0]]}")
     else:
         out.append("- 汇率：暂无")
-    
-    # 两融余额（官方接口：stock_margin_account_info）
+
+    # 两融余额（T-1披露）
     mg = safe_block("两融", ak.stock_margin_account_info)
     if isinstance(mg, pd.DataFrame) and not mg.empty:
         l = mg.iloc[-1]
-        out.append(f"- **两融余额**：融资 {l.get('融资余额','N/A')}亿 ｜ 融券 {l.get('融券余额','N/A')}亿 ｜ 维持担保比 {l.get('平均维持担保比例','N/A')}")
+        out.append(f"- **两融余额**（T-1）：融资 {l.get('融资余额','N/A')}亿 ｜ 融券 {l.get('融券余额','N/A')}亿 ｜ 维持担保比 {l.get('平均维持担保比例','N/A')}")
     else:
         out.append("- 两融余额：暂无")
-    
-    # 美债10Y-2Y利差（官方接口：bond_zh_us_rate）
+
+    # 美债10Y-2Y利差（前一交易日收盘）
     ust = safe_block("美债", ak.bond_zh_us_rate)
     if isinstance(ust, pd.DataFrame) and not ust.empty:
         ten = [c for c in ust.columns if "10年" in c or "10Y" in c]
         two = [c for c in ust.columns if "2年" in c or "2Y" in c]
         if ten and two:
             spread = float(ust.iloc[-1][ten[0]]) - float(ust.iloc[-1][two[0]])
-            out.append(f"- **美债10Y-2Y利差**：{round(spread,2)}bp（倒挂=衰退预期）")
+            out.append(f"- **美债10Y-2Y利差**（昨收盘）：{round(spread,2)}bp（倒挂=衰退预期）")
     else:
         out.append("- 美债利差：暂无")
-    
-    # VIX恐慌指数（官方接口：index_option_300etf_qvix）
-    vix = safe_block("VIX", ak.index_option_300etf_qvix)
-    if isinstance(vix, pd.DataFrame) and not vix.empty:
-        out.append(f"- **VIX恐慌指数**：{vix.iloc[-1].get('qvix', 'N/A')}")
-    else:
-        out.append("- VIX：暂无")
-    
+
+    # 美股VIX：无稳定官方接口，明确标注
+    out.append("- **VIX恐慌指数**：暂无稳定官方接口（AkShare `index_vix` 源延时数日且易失效，不冒充实时）")
+
     return "\n".join(out)
 
 def block_macro():
-    """宏观与政策（所有接口均核对AkShare 1.18.x官方文档，100%存在）"""
-    out = ["### 🇨🇳 宏观与政策"]
-    
-    # CPI同比（官方接口：macro_china_cpi_yearly）
+    """【月度层】宏观与政策"""
+    out = ["### 🇨🇳 宏观与政策（最近披露期）"]
+
     cpi = safe_block("CPI", ak.macro_china_cpi_yearly)
     if isinstance(cpi, pd.DataFrame) and not cpi.empty:
         latest = cpi.iloc[-1]
@@ -100,8 +93,7 @@ def block_macro():
         out.append(f"- CPI同比（最新）：{val}%")
     else:
         out.append("- CPI：暂无")
-    
-    # 制造业PMI（官方接口：macro_china_pmi_yearly）
+
     pmi = safe_block("PMI", ak.macro_china_pmi_yearly)
     if isinstance(pmi, pd.DataFrame) and not pmi.empty:
         mc = [c for c in pmi.columns if "制造业" in c or "pmi" in c.lower()]
@@ -109,100 +101,96 @@ def block_macro():
             out.append(f"- 制造业PMI（最新）：{pmi.iloc[-1][mc[0]]}%")
     else:
         out.append("- PMI：暂无")
-    
-    # 央行逆回购（官方接口：macro_china_reverse_repo，之前的gksccz是我记错了，根本不存在）
-    repo = safe_block("逆回购", ak.macro_china_reverse_repo)
+
+    m2 = safe_block("M2", ak.macro_china_m2)
+    if isinstance(m2, pd.DataFrame) and not m2.empty:
+        latest = m2.iloc[-1]
+        val = latest.get("m2") or latest.get("M2") or latest.get("value") or "N/A"
+        out.append(f"- M2同比（最新）：{val}%")
+    else:
+        out.append("- M2：暂无")
+
+    # 央行逆回购（macro_china_gksccz 旧版存在，新版稳定性存疑，兜底处理）
+    repo = safe_block("逆回购", ak.macro_china_gksccz)
     if isinstance(repo, pd.DataFrame) and not repo.empty:
-        l = repo.iloc[-1]
-        # 自动匹配列名，适配不同版本
-        vol_col = [c for c in repo.columns if "交易量" in c or "规模" in c or "金额" in c][0]
-        rate_col = [c for c in repo.columns if "利率" in c or "收益率" in c or "rate" in c.lower()][0]
-        out.append(f"- 央行逆回购：{l[vol_col]}亿 ｜ 利率 {l[rate_col]}%")
+        reverse = repo[repo["正/逆回购"].astype(str).str.contains("逆回购", na=False)]
+        if not reverse.empty:
+            l = reverse.iloc[-1]
+            vol = l.get("交易量") or l.get("deal_amount") or "N/A"
+            rate = l.get("中标利率") or l.get("rate") or "N/A"
+            out.append(f"- 央行逆回购（最近一次）：{vol}亿 ｜ 利率 {rate}%")
+        else:
+            out.append("- 逆回购：近期无操作")
     else:
         out.append("- 逆回购：暂无（接口暂不可用）")
-    
+
     return "\n".join(out)
 
 def block_news():
-    """财联社快讯（官方接口：stock_info_global_cls，100%存在）"""
+    """【事件层】财联社隔夜电报"""
     out = ["### 📰 隔夜时政 / 财经快讯（财联社）"]
-    df = safe_block("财联社", ak.stock_info_global_cls)
-    if isinstance(df, pd.DataFrame) and "content" in df.columns:
-        kw = ["美联储","央行","国务院","发改委","证监会","地缘","关税","制裁","非农","CPI","降息","降准","逆回购","汇率","A股","港股","美股","两融"]
-        f = df[df["content"].str.contains("|".join(kw), na=False)]
-        f = f[f["content"].notna()]
-        if not f.empty:
-            for c in f.head(10)["content"]:
-                out.append(f"- {c[:90]}")
+    df = safe_block("财联社", ak.stock_telegraph_cls)
+    if isinstance(df, pd.DataFrame):
+        col = "content" if "content" in df.columns else ("标题" if "标题" in df.columns else ("title" if "title" in df.columns else None))
+        if col:
+            kw = ["美联储","央行","国务院","发改委","证监会","地缘","关税","制裁","非农","CPI","降息","降准","逆回购","汇率","A股","港股","美股","两融"]
+            f = df[df[col].astype(str).str.contains("|".join(kw), na=False)]
+            f = f[f[col].notna()]
+            if not f.empty:
+                for c in f.head(10)[col]:
+                    out.append(f"- {str(c)[:90]}")
+            else:
+                out.append("- 隔夜无匹配重大事件（不编造）")
         else:
-            out.append("- 隔夜无匹配重大事件（不编造）")
+            out.append("- 财联社：列结构变更，暂无法解析")
     else:
         out.append("- 财联社数据获取中，请稍后查看")
     return "\n".join(out)
 
 def llm_view(snapshot: str):
-    """混元永久免费版反向研判（配置完全正确，和Secrets变量名一致）"""
     if not HUNYUAN_API_KEY:
         return "### 🎯 研判（未配置HUNYUAN_API_KEY，静态降级）\n- 依据上方真实数据自行研判；集合竞价确认方向，严控仓位。"
     sys_p = (
         "你是买方首席宏观策略师，遵循第二层思维。硬性规则：\n"
         "1) 仅基于提供的真实快照分析，禁止编造未提供的数据、禁止预测确定涨跌；\n"
         "2) 每条事件必须写『传导链』：事件 → 受影响主体 → 具体经济行为 → 可观测后验信号；\n"
-        "3) 指出市场共识已定价部分 vs 未被定价隐性风险（全球杠杆脆弱点、流动性拐点、跨市场错杀、政策时滞）；\n"
+        "3) 指出市场共识已定价部分 vs 未被定价隐性风险；\n"
         "4) 提出3条尖锐反向质疑；\n"
-        "5) 末句给市场状态判定（钝化/脆弱/假突破/流动性陷阱等）。Markdown，≤300字，冷峻。"
+        "5) 末句给市场状态判定。Markdown，≤300字，冷峻。"
     )
     try:
         r = requests.post(
             "https://api.hunyuan.cloud.tencent.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {HUNYUAN_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": "hunyuan-lite",
-                "messages": [
-                    {"role": "system", "content": sys_p},
-                    {"role": "user", "content": f"快照：\n{snapshot}"}
-                ],
-                "temperature": 0.8,
-                "max_tokens": 600
-            },
+            json={"model": "hunyuan-lite", "messages": [{"role": "system", "content": sys_p},
+                   {"role": "user", "content": f"快照：\n{snapshot}"}], "temperature": 0.8, "max_tokens": 600},
             timeout=60
         )
-        return "### 🎯 智能研判（混元·hunyuan-lite 免费版·事件传导+反向质疑）\n" + r.json()["choices"][0]["message"]["content"]
+        return "### 🎯 智能研判（混元·hunyuan-lite 免费版）\n" + r.json()["choices"][0]["message"]["content"]
     except Exception as e:
         return f"### 🎯 研判生成失败（降级）\n- 异常：{str(e)[:40]}"
 
 def push(content):
-    """推送至微信（PushPlus，配置完全正确）"""
     if not PUSHPLUS_TOKEN:
         print("❌ 未配置PUSHPLUS_TOKEN")
         return
     try:
-        r = requests.post(
-            "https://www.pushplus.plus/send",
-            json={
-                "token": PUSHPLUS_TOKEN,
-                "title": f"07:30 全球晨报 · {datetime.now().strftime('%Y-%m-%d')}",
-                "content": content,
-                "template": "markdown"
-            },
-            timeout=30
-        )
+        r = requests.post("https://www.pushplus.plus/send", json={
+            "token": PUSHPLUS_TOKEN, "title": f"07:30 全球晨报 · {datetime.now().strftime('%Y-%m-%d')}",
+            "content": content, "template": "markdown"}, timeout=30)
         print(f"✅ 推送：{r.json().get('msg')}")
     except Exception as e:
         print(f"❌ 推送异常（已落盘）：{str(e)[:50]}")
 
 def main():
     print("=" * 50)
-    print(f"启动：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | akshare {ak.__version__}")
+    print(f"启动：{datetime.now():%Y-%m-%d %H:%M:%S} | akshare {ak.__version__}")
     print("=" * 50)
-    
     b1, b2, b3 = block_global(), block_news(), block_macro()
     snapshot = json.dumps({"全球资产/杠杆": b1, "新闻": b2, "宏观": b3}, ensure_ascii=False)[:3000]
     view = llm_view(snapshot)
-    
-    content = f"# 📈 07:30 全球晨报 · {datetime.now().strftime('%Y年%m月%d日')}\n\n" + "\n\n".join([b1, b2, b3, view])
-    content += "\n\n---\n*源：AkShare/财联社/央行 · 允许跨市场时差 · 缺失不补 · 不构成投资建议*"
-    
+    content = f"# 📈 07:30 全球晨报 · {datetime.now():%Y年%m月%d日}\n\n" + "\n\n".join([b1, b2, b3, view])
+    content += "\n\n---\n*源：AkShare/财联社/央行 · 按07:30时点标注时效 · 缺失不补 · 不构成投资建议*"
     push(content)
     try:
         with open("raw_news.txt", "w", encoding="utf-8") as f:

@@ -102,13 +102,12 @@ def block_global():
     # A股涨跌家数 T‑1：接口stock_a_spot_em已移除，禁用
     out.append("- **A股T‑1涨跌家数**：⚠️akshare该接口已移除，请网页手动查看。")
 
-    # 1天期国债逆回购
+    # 1天期国债逆回购【修复完整缩进】
     try:
         repo_sh = safe_block("国债逆回购", ak.bond_repo_sh)
-except AttributeError as e:
+    except AttributeError as e:
         print(f"⚠️【国债逆回购模块异常】{e}，跳过该板块，不中断整体晨报任务")
         repo_sh = None
-
 
     if isinstance(repo_sh, pd.DataFrame) and not repo_sh.empty:
         row_1d = repo_sh[repo_sh["代码"] == "204001"]

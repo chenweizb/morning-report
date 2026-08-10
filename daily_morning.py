@@ -6,9 +6,9 @@ import akshare as ak
 import pandas as pd
 from datetime import datetime
 
-# 密钥从GitHub Secrets读取，不要硬编码！
+# ================= 配置区（密钥从GitHub Secrets读取，不要硬编码！） =================
 PUSHPLUS_TOKEN = os.environ.get("PUSHPLUS_TOKEN", "")
-HUNYUAN_API_KEY = os.environ.get("HUNYUAN_API_KEY", "")
+HUNyuan_API_KEY = os.environ.get("HUNYUAN_API_KEY", "")
 
 def safe_block(name, func, *args, fallback="暂无（接口未返回，不推测）", **kwargs):
     """单块容错：接口报错/空数据直接返回fallback，不中断整体流程"""
@@ -22,7 +22,7 @@ def safe_block(name, func, *args, fallback="暂无（接口未返回，不推测
         return fallback
 
 def block_global():
-    """全球资产+杠杆+流动性（全最新接口）"""
+    """全球资产+杠杆+流动性（全官方最新接口）"""
     out = ["### 🌍 全球资产 / 杠杆 / 流动性（截至北京时间07:30）"]
     
     # 美股三大指数
@@ -79,7 +79,7 @@ def block_global():
     else:
         out.append("- 美债利差：暂无")
     
-    # VIX恐慌指数（最新官方接口）
+    # VIX恐慌指数（官方最新接口，无报错）
     vix = safe_block("VIX", ak.index_option_300etf_qvix)
     if isinstance(vix, pd.DataFrame) and not vix.empty:
         out.append(f"- **VIX恐慌指数**：{vix.iloc[-1].get('qvix', 'N/A')}")
@@ -89,23 +89,17 @@ def block_global():
     return "\n".join(out)
 
 def block_macro():
-"""获取宏观指标（已修复接口报错）"""
-try:
-# 尝试获取中国央行公开市场操作数据
-# 如果获取失败，会被下面的 except 捕获，不会导致整个程序崩溃
-macro_df = ak.macro_china_gksccz()
-# 兼容处理：有时候接口返回的列名不同，这里做一下标准化
-if '操作日期' in macro_df.columns:
-    latest = macro_df.sort_values(by='操作日期', ascending=False).head(3)
-    return f"- **央行公开市场操作 (最近3期):**
-" + "
-".join([f" - {row['操作日期']} {row.get('正/逆回购', '')} {row.get('交易量', 0)}亿" for _, row in latest.iterrows()])
-else:
-# 如果列名不对，直接展示前3行数据
-return macro_df.head(3).to_string(index=False)
-except Exception as e:
-    # 只要这一段出问题，就返回错误信息，保证晨报还能发出去
-    return f"- **宏观数据获取异常**: {str(e)[:50]}"
+    """宏观与政策（全官方最新接口，容错不崩）"""
+    out = ["### 🇨🇳 宏观与政策"]
+    
+    # CPI同比
+    cpi = safe_block("CPI", ak.macro_china_cpi_yearly)
+    if isinstance(cpi, pd.DataFrame) and not cpi.empty:
+        latest = cpi.iloc[-1]
+        val = latest.get("cpi") or latest.get("value") or "N/A"
+        out.append(f"- CPI同比（最新）：{val}%")
+    else:
+        out.append("- CPI：暂无")
     
     # 制造业PMI
     pmi = safe_block("PMI", ak.macro_china_pmi_yearly)
@@ -116,18 +110,22 @@ except Exception as e:
     else:
         out.append("- PMI：暂无")
     
-    # 央行逆回购
+    # 央行逆回购（兼容不同版本列名）
     repo = safe_block("逆回购", ak.macro_china_gksccz)
     if isinstance(repo, pd.DataFrame) and not repo.empty:
+        # 自动匹配列名，避免版本差异报错
+        date_col = [c for c in repo.columns if "日期" in c or "date" in c.lower()][0]
+        vol_col = [c for c in repo.columns if "交易量" in c or "规模" in c][0]
+        rate_col = [c for c in repo.columns if "利率" in c or "rate" in c.lower()][0]
         l = repo.iloc[-1]
-        out.append(f"- 央行逆回购：{l.get('交易量','N/A')}亿 ｜ 利率 {l.get('中标利率','N/A')}%")
+        out.append(f"- 央行逆回购：{l[vol_col]}亿 ｜ 利率 {l[rate_col]}%")
     else:
-        out.append("- 逆回购：暂无")
+        out.append("- 逆回购：暂无（接口暂不可用）")
     
     return "\n".join(out)
 
 def block_news():
-    """财联社快讯（最新官方接口，无旧版兼容）"""
+    """财联社快讯（官方最新接口，无旧版兼容）"""
     out = ["### 📰 隔夜时政 / 财经快讯（财联社）"]
     df = safe_block("财联社", ak.stock_info_global_cls)
     if isinstance(df, pd.DataFrame) and "content" in df.columns:
@@ -145,7 +143,7 @@ def block_news():
 
 def llm_view(snapshot: str):
     """混元永久免费版反向研判（无消耗）"""
-    if not HUNYUAN_API_KEY:
+    if not HUNyuan_API_KEY:
         return "### 🎯 研判（未配置HUNYUAN_API_KEY，静态降级）\n- 依据上方真实数据自行研判；集合竞价确认方向，严控仓位。"
     sys_p = (
         "你是买方首席宏观策略师，遵循第二层思维。硬性规则：\n"
@@ -158,11 +156,16 @@ def llm_view(snapshot: str):
     try:
         r = requests.post(
             "https://api.hunyuan.cloud.tencent.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {HUNYUAN_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "hunyuan-lite",
-                  "messages": [{"role": "system", "content": sys_p},
-                               {"role": "user", "content": f"快照：\n{snapshot}"}],
-                  "temperature": 0.8, "max_tokens": 600},
+            headers={"Authorization": f"Bearer {HUNyuan_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "hunyuan-lite",
+                "messages": [
+                    {"role": "system", "content": sys_p},
+                    {"role": "user", "content": f"快照：\n{snapshot}"}
+                ],
+                "temperature": 0.8,
+                "max_tokens": 600
+            },
             timeout=60
         )
         return "### 🎯 智能研判（混元·hunyuan-lite 免费版·事件传导+反向质疑）\n" + r.json()["choices"][0]["message"]["content"]
@@ -175,11 +178,16 @@ def push(content):
         print("❌ 未配置PUSHPLUS_TOKEN")
         return
     try:
-        r = requests.post("https://www.pushplus.plus/send", json={
-            "token": PUSHPLUS_TOKEN,
-            "title": f"07:30 全球晨报 · {datetime.now().strftime('%Y-%m-%d')}",
-            "content": content, "template": "markdown"
-        }, timeout=30)
+        r = requests.post(
+            "https://www.pushplus.plus/send",
+            json={
+                "token": PUSHPLUS_TOKEN,
+                "title": f"07:30 全球晨报 · {datetime.now().strftime('%Y-%m-%d')}",
+                "content": content,
+                "template": "markdown"
+            },
+            timeout=30
+        )
         print(f"✅ 推送：{r.json().get('msg')}")
     except Exception as e:
         print(f"❌ 推送异常（已落盘）：{str(e)[:50]}")

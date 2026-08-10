@@ -90,7 +90,7 @@ def block_macro():
 # 3. 隔夜时政/财经快讯（财联社，失败降级）
 def block_news():
     out = ["### 📰 隔夜时政 / 财经快讯（财联社）"]
-    df = safe_block("财联社", ak.stock_telegraph_cls)
+    df = safe_block("财联社", ak.cls_telegraph)
     if isinstance(df, pd.DataFrame) and "content" in df.columns:
         kw = ["美联储","央行","国务院","发改委","证监会","地缘","关税","制裁","非农","CPI","降息","降准","逆回购","汇率","A股","港股","美股"]
         f = df[df["content"].str.contains("|".join(kw), na=False)]

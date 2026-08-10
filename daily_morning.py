@@ -90,11 +90,7 @@ def block_macro():
 # 3. 隔夜时政/财经快讯（财联社，失败降级）
 def block_news():
     out = ["### 📰 隔夜时政 / 财经快讯（财联社）"]
-    try:
-#优先尝试新版接口（适配GitHub 云端最新环境)
-df = safe_block("财联社", ak.stock_telegraph_cls)
-
-except AttributeError:
+   df = safe_block("财联社", ak.stock_info_global_cls())
 
 # 如果新版不存在，则降级使用旧版接口（适配你本地电脑的旧环境）
 

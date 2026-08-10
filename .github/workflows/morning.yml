@@ -1,37 +1,19 @@
-name: 07:30 全球晨报
+name:盘前晨报任务
 on:
-  workflow_dispatch:
   schedule:
-    - cron: '30 23 * * *'      # UTC 23:30 = 北京时间07:30
-      timezone: 'Asia/Shanghai'
+    # UTC时间23:00 = 北京时间早上7点
+    - cron: "0 23 * * *"
+  workflow_dispatch:
 jobs:
   run:
-    runs-on: ubuntu-latest
+    runs‑on: ubuntu‑latest
+    env:
+      PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-      - name: 安装系统依赖+Python依赖
+      - name:安装依赖
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libxml2-dev libxslt1-dev zlib1g-dev python3-dev pkg-config
-          python -m pip install --upgrade pip
-          # 绝大多数包走清华源加速
-          pip install -i https://pypi.tuna.tsinghua.edu.cn/simple/ -r requirements.txt
-          # akshare强制使用官方pypi源，解决清华镜像同步滞后拿不到新版本的问题
-          pip install "akshare>=1.18.83" -i https://pypi.org/simple
-          # 打印云端实际版本，用于日志排查
-          python -c "import akshare; print('✅云端AkShare版本：', akshare.__version__)"
-      - name: 运行主程序
-        env:
-          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
-          HUNYUAN_API_KEY: ${{ secrets.HUNYUAN_API_KEY }}
-        run: python daily_morning.py
-      - name: 落盘原始数据
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add raw_news.txt || true
-          git commit -m "Daily update: $(date +'%Y-%m-%d')" || true
-          git push || true
+          python3 -m pip install -r requirements.txt
+      - name:运行脚本
+        run: python3 morning_report.py

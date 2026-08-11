@@ -4,11 +4,16 @@ on:
   schedule:
     - cron: '30 23 * * *'      # UTC23:30 = 北京时间07:30
       timezone: 'Asia/Shanghai'
-jobs:
+
+    jobs:
   run:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    runs-on: ubuntu‑22.04
+    env:
+      PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
     steps:
+      - uses: actions/checkout@v4
+      ……后续原有步骤不变
+steps:
       - uses: actions/checkout@v4
 
       - name: 配置Python环境

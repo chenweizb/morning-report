@@ -6,8 +6,8 @@ on:
       timezone: 'Asia/Shanghai'
 jobs:
   run:
-    runs-on: ubuntu-22.04  # 固定版本，缓解latest镜像排队拥堵
-    timeout-minutes: 15    # 15分钟拿不到机器自动终止，防止无限卡死
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -15,14 +15,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          cache: 'pip' # 缓存Python依赖包，每次不用重复下载，提速
+          cache: 'pip'
 
       - name: 安装依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y libxml2-dev libxslt1-dev zlib1g-dev python3-dev pkg-config
           python -m pip install --upgrade pip
-          # 优先清华源，失败自动切换官方源
           pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple || pip install -r requirements.txt
 
       - name: 执行晨报脚本

@@ -21,13 +21,13 @@ SYSTEM_PROMPT = """
 ③反向思考【强制】：风险点、逻辑漏洞、容易被忽略的利空；
 ④跟踪线索：后续需要重点观察的指标与事件，只讲逻辑，不推个股。
 3. 末尾固定带上一句话：本内容仅作为投研参考，不构成投资建议。
-4. 使用markdown格式，文字专业克制，总字数控制600‑900字。素材不足时如实说明，不要强行编造。
+4. 使用markdown格式，文字专业克制，总字数控制600-900字。素材不足时如实说明，不要强行编造。
 """
 
 def safe_http_get(url, timeout=15):
     try:
         resp = requests.get(url, timeout=timeout, headers={
-            "User‑Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         })
         resp.raise_for_status()
         return resp
@@ -43,7 +43,7 @@ def fetch_global_market():
         ("^GSPC","标普500"),
         ("GC=F","COMEX黄金(美元/盎司)"),
         ("CL=F","WTI原油(美元/桶)"),
-        ("DX‑Y.NYB","美元指数")
+        ("DX-Y.NYB","美元指数")
     ]
     for symbol,name in tick_list:
         try:
@@ -53,7 +53,7 @@ def fetch_global_market():
                 last = hist.iloc[-1]
                 prev = hist.iloc[-2]
                 close = round(last["Close"],2)
-                pct = round(((last["Close"]‑prev["Close"])/prev["Close"])*100,2)
+                pct = round(((last["close"] - prev["close"]) / prev["close"]) * 100, 2)
                 result.append(f"- **{name}**: {close} ｜ {pct}%")
             else:
                 result.append(f"- **{name}**: 获取失败，请访问Yahoo Finance查看")
@@ -67,7 +67,7 @@ def fetch_cls_news():
     if resp is None:
         return "- 财联社快讯抓取失败，请手动访问 https://www.cls.cn/telegraph"
     html = etree.HTML(resp.text)
-    items = html.xpath('//div[contains(@class,"telegraph‑list‑item")]//p/text()')
+    items = html.xpath('//div[contains(@class,"telegraph-list-item")]//p/text()')
     out = []
     for idx,item in enumerate(items[:8]):
         txt = str(item).strip()
@@ -80,8 +80,8 @@ def fetch_cls_news():
 def get_policy_note():
     return """
 ### 🌐中央金融政策查阅入口
-‑ 中国人民银行：https://www.pbc.gov.cn
-‑ 证监会官网：http://www.csrc.gov.cn
+- 中国人民银行：https://www.pbc.gov.cn
+- 证监会官网：http://www.csrc.gov.cn
 
 > ⚠️地方财政政策不再自动抓取，请自行访问各省市财政厅官网。
 """.strip()
@@ -90,7 +90,7 @@ def ai_analyse(raw_text:str):
     if not ENABLE_AI or not LLM_API_KEY:
         return "### 🎯基金经理视角研判\nAI模块未启用，请结合上面素材自行完成投研分析。"
     payload = {
-        "model":"hunyuan‑lite",
+        "model":"hunyuan-lite",
         "messages":[
             {"role":"system","content":SYSTEM_PROMPT},
             {"role":"user","content":f"原始素材：\n{raw_text}"}
@@ -98,7 +98,7 @@ def ai_analyse(raw_text:str):
         "temperature":0.7,
         "max_tokens":1200
     }
-    headers = {"Authorization":f"Bearer {LLM_API_KEY}","Content‑Type":"application/json"}
+    headers = {"Authorization":f"Bearer {LLM_API_KEY}","Content-Type":"application/json"}
     try:
         r = requests.post(LLM_API_URL,json=payload,headers=headers,timeout=45)
         r.raise_for_status()
@@ -126,7 +126,7 @@ def pushplus_send(title,content):
 
 def main():
     now = datetime.now(TZ_CN)
-    date_str = now.strftime("%Y‑%m‑%d")
+    date_str = now.strftime("%Y-%m-%d")
     print(f"====开始生成盘前晨报 {date_str}====")
 
     market_block = "## 🌍隔夜全球资产收盘\n" + fetch_global_market()
@@ -151,7 +151,7 @@ def main():
 数据源：Yahoo Finance、财联社公开网页
 """
     #本地保存文件
-    with open(f"report_{date_str}.md","w",encoding="utf‑8") as f:
+    with open(f"report_{date_str}.md","w",encoding="utf-8") as f:
         f.write(full_report)
     pushplus_send(f"盘前晨报 {date_str}",full_report)
     print("执行完成，报告已本地保存并尝试推送")

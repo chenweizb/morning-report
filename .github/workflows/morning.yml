@@ -26,4 +26,4 @@ jobs:
           pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple || pip install -r requirements.txt
 
       - name: 执行晨报脚本
-        run: python main.py
+        run: python daily_morning.py

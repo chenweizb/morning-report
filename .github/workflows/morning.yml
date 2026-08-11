@@ -1,19 +1,29 @@
-name: 盘前晨报任务
+name: 07:30 全球晨报
 on:
+  workflow_dispatch: # 支持手动点击触发测试
   schedule:
-    # UTC 23点 = 北京时间07点
-    - cron: "0 23 * * *"
-  workflow_dispatch:
+    - cron: '30 23 * * *'      # UTC23:30 = 北京时间07:30
+      timezone: 'Asia/Shanghai'
 jobs:
   run:
-    runs-on: ubuntu‑latest
-    env:
-      PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
-      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+    runs-on: ubuntu-22.04  # 固定版本，缓解latest镜像排队拥堵
+    timeout-minutes: 15    # 15分钟拿不到机器自动终止，防止无限卡死
     steps:
       - uses: actions/checkout@v4
-      - name: 安装python依赖
+
+      - name: 配置Python环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip' # 缓存Python依赖包，每次不用重复下载，提速
+
+      - name: 安装依赖
         run: |
-          python3 ‑m pip install ‑r requirements.txt
-      - name: 运行盘前晨报脚本
-        run: python3 morning_report.py
+          sudo apt-get update
+          sudo apt-get install -y libxml2-dev libxslt1-dev zlib1g-dev python3-dev pkg-config
+          python -m pip install --upgrade pip
+          # 优先清华源，失败自动切换官方源
+          pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple || pip install -r requirements.txt
+
+      - name: 执行晨报脚本
+        run: python main.py
